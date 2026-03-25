@@ -10,42 +10,16 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
-func brokerDBPath() string {
-	if p := os.Getenv("CLAUDE_PEERS_DB"); p != "" {
-		return p
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claude-peers.db")
-}
-
-func brokerPort() string {
-	if p := os.Getenv("CLAUDE_PEERS_PORT"); p != "" {
-		return p
-	}
-	return "7899"
-}
-
 func generatePeerID() string {
 	b := make([]byte, 4)
 	rand.Read(b)
 	return hex.EncodeToString(b)
-}
-
-func pidAlive(pid int) bool {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return proc.Signal(syscall.Signal(0)) == nil
 }
 
 type Broker struct {
@@ -54,7 +28,8 @@ type Broker struct {
 }
 
 func newBroker() (*Broker, error) {
-	db, err := sql.Open("sqlite", brokerDBPath()+"?_pragma=journal_mode(wal)&_pragma=busy_timeout(3000)")
+	dbPath := cfg.DBPath
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)&_pragma=busy_timeout(3000)")
 	if err != nil {
 		return nil, err
 	}
@@ -63,6 +38,7 @@ func newBroker() (*Broker, error) {
 		`CREATE TABLE IF NOT EXISTS peers (
 			id TEXT PRIMARY KEY,
 			pid INTEGER NOT NULL,
+			machine TEXT NOT NULL DEFAULT '',
 			cwd TEXT NOT NULL,
 			git_root TEXT,
 			tty TEXT,
@@ -70,6 +46,8 @@ func newBroker() (*Broker, error) {
 			registered_at TEXT NOT NULL,
 			last_seen TEXT NOT NULL
 		)`,
+		// Migration: add machine column if missing (existing databases).
+		`ALTER TABLE peers ADD COLUMN machine TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			from_id TEXT NOT NULL,
@@ -78,10 +56,16 @@ func newBroker() (*Broker, error) {
 			sent_at TEXT NOT NULL,
 			delivered INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			type TEXT NOT NULL,
+			peer_id TEXT,
+			machine TEXT,
+			data TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL
+		)`,
 	} {
-		if _, err := db.Exec(stmt); err != nil {
-			return nil, fmt.Errorf("schema: %w", err)
-		}
+		db.Exec(stmt) // Ignore errors from ALTER (column already exists).
 	}
 
 	b := &Broker{db: db}
@@ -89,40 +73,63 @@ func newBroker() (*Broker, error) {
 	return b, nil
 }
 
-func (b *Broker) cleanStalePeers() {
-	rows, err := b.db.Query("SELECT id, pid FROM peers")
+func (b *Broker) emitEvent(eventType, peerID, machine, data string) {
+	b.db.Exec(
+		"INSERT INTO events (type, peer_id, machine, data, created_at) VALUES (?, ?, ?, ?, ?)",
+		eventType, peerID, machine, data, nowISO(),
+	)
+}
+
+func (b *Broker) recentEvents(limit int) []Event {
+	rows, err := b.db.Query(
+		"SELECT id, type, peer_id, machine, data, created_at FROM events ORDER BY id DESC LIMIT ?",
+		limit,
+	)
 	if err != nil {
-		return
+		return nil
 	}
 	defer rows.Close()
 
-	var stale []string
+	var events []Event
 	for rows.Next() {
-		var id string
-		var pid int
-		rows.Scan(&id, &pid)
-		if !pidAlive(pid) {
-			stale = append(stale, id)
-		}
+		var e Event
+		var peerID, machine sql.NullString
+		rows.Scan(&e.ID, &e.Type, &peerID, &machine, &e.Data, &e.CreatedAt)
+		e.PeerID = peerID.String
+		e.Machine = machine.String
+		events = append(events, e)
 	}
+	if events == nil {
+		events = []Event{}
+	}
+	return events
+}
 
-	for _, id := range stale {
-		b.db.Exec("DELETE FROM peers WHERE id = ?", id)
-		b.db.Exec("DELETE FROM messages WHERE to_id = ? AND delivered = 0", id)
+// cleanStalePeers removes peers that haven't sent a heartbeat within the timeout.
+// Works for both local and remote peers -- no PID checks needed.
+func (b *Broker) cleanStalePeers() {
+	timeout := cfg.StaleTimeout
+	if timeout <= 0 {
+		timeout = 45
 	}
+	cutoff := time.Now().UTC().Add(-time.Duration(timeout) * time.Second).Format(time.RFC3339)
+	b.db.Exec("DELETE FROM peers WHERE last_seen < ?", cutoff)
+	eventCutoff := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+	b.db.Exec("DELETE FROM events WHERE created_at < ?", eventCutoff)
 }
 
 func (b *Broker) register(req RegisterRequest) RegisterResponse {
 	id := generatePeerID()
 	now := nowISO()
 
-	// Remove existing registration for same PID
-	b.db.Exec("DELETE FROM peers WHERE pid = ?", req.PID)
+	// Remove existing registration for same PID+machine combo.
+	b.db.Exec("DELETE FROM peers WHERE pid = ? AND machine = ?", req.PID, req.Machine)
 
 	b.db.Exec(
-		"INSERT INTO peers (id, pid, cwd, git_root, tty, summary, registered_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		id, req.PID, req.CWD, req.GitRoot, req.TTY, req.Summary, now, now,
+		"INSERT INTO peers (id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		id, req.PID, req.Machine, req.CWD, req.GitRoot, req.TTY, req.Summary, now, now,
 	)
+	b.emitEvent("peer_joined", id, req.Machine, req.Summary)
 	return RegisterResponse{ID: id}
 }
 
@@ -132,6 +139,7 @@ func (b *Broker) heartbeat(req HeartbeatRequest) {
 
 func (b *Broker) setSummary(req SetSummaryRequest) {
 	b.db.Exec("UPDATE peers SET summary = ? WHERE id = ?", req.Summary, req.ID)
+	b.emitEvent("summary_changed", req.ID, "", req.Summary)
 }
 
 func (b *Broker) listPeers(req ListPeersRequest) []Peer {
@@ -140,18 +148,25 @@ func (b *Broker) listPeers(req ListPeersRequest) []Peer {
 
 	switch req.Scope {
 	case "directory":
-		query = "SELECT id, pid, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE cwd = ?"
+		query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE cwd = ?"
 		args = []any{req.CWD}
 	case "repo":
 		if req.GitRoot != "" {
-			query = "SELECT id, pid, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE git_root = ?"
+			query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE git_root = ?"
 			args = []any{req.GitRoot}
 		} else {
-			query = "SELECT id, pid, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE cwd = ?"
+			query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE cwd = ?"
 			args = []any{req.CWD}
 		}
-	default:
-		query = "SELECT id, pid, cwd, git_root, tty, summary, registered_at, last_seen FROM peers"
+	case "machine":
+		if req.Machine != "" {
+			query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE machine = ?"
+			args = []any{req.Machine}
+		} else {
+			query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers"
+		}
+	default: // "all" or empty = everything
+		query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers"
 	}
 
 	rows, err := b.db.Query(query, args...)
@@ -164,15 +179,11 @@ func (b *Broker) listPeers(req ListPeersRequest) []Peer {
 	for rows.Next() {
 		var p Peer
 		var gitRoot, tty sql.NullString
-		rows.Scan(&p.ID, &p.PID, &p.CWD, &gitRoot, &tty, &p.Summary, &p.RegisteredAt, &p.LastSeen)
+		rows.Scan(&p.ID, &p.PID, &p.Machine, &p.CWD, &gitRoot, &tty, &p.Summary, &p.RegisteredAt, &p.LastSeen)
 		p.GitRoot = gitRoot.String
 		p.TTY = tty.String
 
 		if req.ExcludeID != "" && p.ID == req.ExcludeID {
-			continue
-		}
-		if !pidAlive(p.PID) {
-			b.db.Exec("DELETE FROM peers WHERE id = ?", p.ID)
 			continue
 		}
 		peers = append(peers, p)
@@ -190,6 +201,7 @@ func (b *Broker) sendMessage(req SendMessageRequest) SendMessageResponse {
 		"INSERT INTO messages (from_id, to_id, text, sent_at, delivered) VALUES (?, ?, ?, ?, 0)",
 		req.FromID, req.ToID, req.Text, nowISO(),
 	)
+	b.emitEvent("message_sent", req.FromID, "", req.ToID)
 	return SendMessageResponse{OK: true}
 }
 
@@ -221,7 +233,9 @@ func (b *Broker) pollMessages(req PollMessagesRequest) PollMessagesResponse {
 }
 
 func (b *Broker) unregister(req UnregisterRequest) {
+	b.emitEvent("peer_left", req.ID, "", "")
 	b.db.Exec("DELETE FROM peers WHERE id = ?", req.ID)
+	b.db.Exec("DELETE FROM messages WHERE to_id = ? AND delivered = 0", req.ID)
 }
 
 func (b *Broker) peerCount() int {
@@ -248,7 +262,6 @@ func runBroker(ctx context.Context) error {
 	}
 	defer b.db.Close()
 
-	// Periodic stale cleanup
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -266,7 +279,7 @@ func runBroker(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, HealthResponse{Status: "ok", Peers: b.peerCount()})
+		writeJSON(w, HealthResponse{Status: "ok", Peers: b.peerCount(), Machine: cfg.MachineName})
 	})
 
 	mux.HandleFunc("POST /register", func(w http.ResponseWriter, r *http.Request) {
@@ -335,15 +348,23 @@ func runBroker(ctx context.Context) error {
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 
-	port := brokerPort()
-	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
+	mux.HandleFunc("GET /events", func(w http.ResponseWriter, r *http.Request) {
+		limit := 50
+		if v := r.URL.Query().Get("limit"); v != "" {
+			fmt.Sscanf(v, "%d", &limit)
+		}
+		writeJSON(w, b.recentEvents(limit))
+	})
+
+	addr := cfg.Listen
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
 
 	srv := &http.Server{Handler: mux}
 
-	log.Printf("[claude-peers broker] listening on 127.0.0.1:%s (db: %s)", port, brokerDBPath())
+	log.Printf("[claude-peers broker] listening on %s (db: %s, machine: %s)", addr, cfg.DBPath, cfg.MachineName)
 
 	context.AfterFunc(ctx, func() {
 		srv.Shutdown(context.Background())

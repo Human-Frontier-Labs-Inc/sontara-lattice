@@ -108,14 +108,14 @@ const (
 var mcpTools = []map[string]any{
 	{
 		"name":        "list_peers",
-		"description": "List other Claude Code instances running on this machine. Returns their ID, working directory, git repo, and summary.",
+		"description": "List other Claude Code instances across the network. Returns their ID, machine, working directory, git repo, and summary.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"scope": map[string]any{
 					"type":        "string",
-					"enum":        []string{"machine", "directory", "repo"},
-					"description": `Scope of peer discovery. "machine" = all instances on this computer. "directory" = same working directory. "repo" = same git repository (including worktrees or subdirectories).`,
+					"enum":        []string{"all", "machine", "directory", "repo"},
+					"description": `Scope of peer discovery. "all" = every peer on every machine. "machine" = only this machine. "directory" = same working directory. "repo" = same git repository.`,
 				},
 			},
 			"required": []string{"scope"},
@@ -163,14 +163,14 @@ var mcpTools = []map[string]any{
 	},
 }
 
-var mcpInstructions = `You are connected to the claude-peers network. Other Claude Code instances on this machine can see you and send you messages.
+var mcpInstructions = `You are connected to the claude-peers network. Other Claude Code instances across multiple machines can see you and send you messages.
 
 IMPORTANT: When you receive a <channel source="claude-peers" ...> message, RESPOND IMMEDIATELY. Do not wait until your current task is finished. Pause what you are doing, reply to the message using send_message, then resume your work. Treat incoming peer messages like a coworker tapping you on the shoulder — answer right away, even if you're in the middle of something.
 
-Read the from_id, from_summary, and from_cwd attributes to understand who sent the message. Reply by calling send_message with their from_id.
+Read the from_id, from_machine, from_summary, and from_cwd attributes to understand who sent the message and where they are. Reply by calling send_message with their from_id.
 
 Available tools:
-- list_peers: Discover other Claude Code instances (scope: machine/directory/repo)
+- list_peers: Discover other Claude Code instances (scope: all/machine/directory/repo)
 - send_message: Send a message to another instance by ID
 - set_summary: Set a 1-2 sentence summary of what you're working on (visible to other peers)
 - check_messages: Manually check for new messages

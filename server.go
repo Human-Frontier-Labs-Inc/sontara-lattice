@@ -19,16 +19,12 @@ const (
 	heartbeatInterval = 15 * time.Second
 )
 
-func brokerURL() string {
-	return "http://127.0.0.1:" + brokerPort()
-}
-
 func brokerFetch(path string, body any, result any) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(brokerURL()+path, "application/json", bytes.NewReader(data))
+	resp, err := http.Post(cfg.BrokerURL+path, "application/json", bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -45,7 +41,7 @@ func brokerFetch(path string, body any, result any) error {
 
 func isBrokerAlive() bool {
 	client := http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(brokerURL() + "/health")
+	resp, err := client.Get(cfg.BrokerURL + "/health")
 	if err != nil {
 		return false
 	}
@@ -53,13 +49,24 @@ func isBrokerAlive() bool {
 	return resp.StatusCode == 200
 }
 
+// isLocalBroker returns true if the broker URL points to localhost.
+// We only auto-start the broker when it's local.
+func isLocalBroker() bool {
+	url := cfg.BrokerURL
+	return strings.Contains(url, "127.0.0.1") || strings.Contains(url, "localhost")
+}
+
 func ensureBroker() error {
 	if isBrokerAlive() {
-		logMCP("Broker already running")
+		logMCP("Broker available at %s", cfg.BrokerURL)
 		return nil
 	}
 
-	logMCP("Starting broker daemon...")
+	if !isLocalBroker() {
+		return fmt.Errorf("remote broker at %s is not reachable", cfg.BrokerURL)
+	}
+
+	logMCP("Starting local broker daemon...")
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -72,7 +79,6 @@ func ensureBroker() error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start broker: %w", err)
 	}
-	// Detach -- don't wait
 	go cmd.Wait()
 
 	for range 30 {
@@ -96,11 +102,11 @@ func runServer(ctx context.Context) error {
 	branch := gitBranch(cwd)
 	files := recentFiles(cwd, 10)
 
+	logMCP("Machine: %s", cfg.MachineName)
 	logMCP("CWD: %s", cwd)
 	logMCP("Git root: %s", root)
-	logMCP("TTY: %s", tty)
+	logMCP("Broker: %s", cfg.BrokerURL)
 
-	// Generate summary async (best-effort, 3s deadline)
 	summaryCh := make(chan string, 1)
 	go func() {
 		summaryCh <- generateSummary(cwd, root, branch, files)
@@ -117,10 +123,10 @@ func runServer(ctx context.Context) error {
 		logMCP("Auto-summary timed out (non-blocking)")
 	}
 
-	// Register with broker
 	var reg RegisterResponse
 	if err := brokerFetch("/register", RegisterRequest{
 		PID:     os.Getpid(),
+		Machine: cfg.MachineName,
 		CWD:     cwd,
 		GitRoot: root,
 		TTY:     tty,
@@ -129,9 +135,8 @@ func runServer(ctx context.Context) error {
 		return fmt.Errorf("register: %w", err)
 	}
 	myID := reg.ID
-	logMCP("Registered as peer %s", myID)
+	logMCP("Registered as peer %s on %s", myID, cfg.MachineName)
 
-	// If summary was slow, apply it late
 	if initialSummary == "" {
 		go func() {
 			if s := <-summaryCh; s != "" {
@@ -143,13 +148,11 @@ func runServer(ctx context.Context) error {
 
 	t := newMCPTransport()
 
-	// Cleanup on exit
 	defer func() {
 		brokerFetch("/unregister", UnregisterRequest{ID: myID}, nil)
 		logMCP("Unregistered from broker")
 	}()
 
-	// Poll loop: check for inbound messages and push as channel notifications
 	var wg sync.WaitGroup
 	pollCtx, pollCancel := context.WithCancel(ctx)
 	defer pollCancel()
@@ -167,7 +170,6 @@ func runServer(ctx context.Context) error {
 		}
 	})
 
-	// Heartbeat loop
 	wg.Go(func() {
 		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
@@ -181,7 +183,6 @@ func runServer(ctx context.Context) error {
 		}
 	})
 
-	// Main loop: read and handle MCP requests from stdin
 	for {
 		req, err := t.readRequest()
 		if err != nil {
@@ -195,16 +196,12 @@ func runServer(ctx context.Context) error {
 		switch req.Method {
 		case "initialize":
 			handleInitialize(req.ID, t)
-
 		case "notifications/initialized":
-			// Client ack, nothing to do
-
+			// Client ack
 		case "tools/list":
 			handleToolsList(req.ID, t)
-
 		case "tools/call":
 			handleToolCall(req.ID, req.Params, myID, cwd, root, t)
-
 		default:
 			if req.ID != nil {
 				t.respondError(req.ID, -32601, fmt.Sprintf("Method not found: %s", req.Method))
@@ -231,13 +228,18 @@ func handleToolCall(id any, params json.RawMessage, myID, cwd, root string, t *M
 		}
 		json.Unmarshal(call.Arguments, &args)
 
-		var peers []Peer
-		err := brokerFetch("/list-peers", ListPeersRequest{
+		listReq := ListPeersRequest{
 			Scope:     args.Scope,
 			CWD:       cwd,
 			GitRoot:   root,
 			ExcludeID: myID,
-		}, &peers)
+		}
+		if args.Scope == "machine" {
+			listReq.Machine = cfg.MachineName
+		}
+
+		var peers []Peer
+		err := brokerFetch("/list-peers", listReq, &peers)
 		if err != nil {
 			toolError(id, t, "Error listing peers: %v", err)
 			return
@@ -251,7 +253,7 @@ func handleToolCall(id any, params json.RawMessage, myID, cwd, root string, t *M
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Found %d peer(s) (scope: %s):\n\n", len(peers), args.Scope)
 		for _, p := range peers {
-			fmt.Fprintf(&sb, "ID: %s\n  PID: %d\n  CWD: %s\n", p.ID, p.PID, p.CWD)
+			fmt.Fprintf(&sb, "ID: %s\n  Machine: %s\n  PID: %d\n  CWD: %s\n", p.ID, p.Machine, p.PID, p.CWD)
 			if p.GitRoot != "" {
 				fmt.Fprintf(&sb, "  Repo: %s\n", p.GitRoot)
 			}
@@ -353,18 +355,14 @@ func pollAndPush(myID, cwd, root string, t *MCPTransport) {
 	}
 
 	for _, msg := range resp.Messages {
-		// Look up sender info
-		fromSummary, fromCwd := "", ""
+		fromSummary, fromCwd, fromMachine := "", "", ""
 		var peers []Peer
-		if err := brokerFetch("/list-peers", ListPeersRequest{
-			Scope:   "machine",
-			CWD:     cwd,
-			GitRoot: root,
-		}, &peers); err == nil {
+		if err := brokerFetch("/list-peers", ListPeersRequest{Scope: "all"}, &peers); err == nil {
 			for _, p := range peers {
 				if p.ID == msg.FromID {
 					fromSummary = p.Summary
 					fromCwd = p.CWD
+					fromMachine = p.Machine
 					break
 				}
 			}
@@ -374,12 +372,13 @@ func pollAndPush(myID, cwd, root string, t *MCPTransport) {
 			"content": msg.Text,
 			"meta": map[string]any{
 				"from_id":      msg.FromID,
+				"from_machine": fromMachine,
 				"from_summary": fromSummary,
 				"from_cwd":     fromCwd,
 				"sent_at":      msg.SentAt,
 			},
 		})
 
-		logMCP("Pushed message from %s: %.80s", msg.FromID, msg.Text)
+		logMCP("Pushed message from %s@%s: %.80s", msg.FromID, fromMachine, msg.Text)
 	}
 }

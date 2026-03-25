@@ -6,6 +6,7 @@ import "time"
 type Peer struct {
 	ID           string `json:"id"`
 	PID          int    `json:"pid"`
+	Machine      string `json:"machine"`
 	CWD          string `json:"cwd"`
 	GitRoot      string `json:"git_root"`
 	TTY          string `json:"tty"`
@@ -28,6 +29,7 @@ type Message struct {
 
 type RegisterRequest struct {
 	PID     int    `json:"pid"`
+	Machine string `json:"machine"`
 	CWD     string `json:"cwd"`
 	GitRoot string `json:"git_root"`
 	TTY     string `json:"tty"`
@@ -49,6 +51,7 @@ type SetSummaryRequest struct {
 
 type ListPeersRequest struct {
 	Scope     string `json:"scope"`
+	Machine   string `json:"machine"`
 	CWD       string `json:"cwd"`
 	GitRoot   string `json:"git_root"`
 	ExcludeID string `json:"exclude_id"`
@@ -78,8 +81,19 @@ type UnregisterRequest struct {
 }
 
 type HealthResponse struct {
-	Status string `json:"status"`
-	Peers  int    `json:"peers"`
+	Status  string `json:"status"`
+	Peers   int    `json:"peers"`
+	Machine string `json:"machine"`
+}
+
+// Event represents a broker event for pub/sub.
+type Event struct {
+	ID        int    `json:"id"`
+	Type      string `json:"type"`
+	PeerID    string `json:"peer_id"`
+	Machine   string `json:"machine"`
+	Data      string `json:"data"`
+	CreatedAt string `json:"created_at"`
 }
 
 func nowISO() string {

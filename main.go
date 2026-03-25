@@ -17,6 +17,7 @@ import (
 
 func main() {
 	log.SetFlags(0)
+	initConfig()
 
 	if len(os.Args) < 2 {
 		printUsage()
@@ -35,6 +36,10 @@ func main() {
 		if err := runServer(ctx); err != nil {
 			log.Fatal(err)
 		}
+	case "init":
+		cliInit(os.Args[2:])
+	case "config":
+		cliShowConfig()
 	case "status":
 		cliStatus()
 	case "peers":
@@ -57,25 +62,34 @@ func printUsage() {
 	fmt.Println(`claude-peers - peer discovery and messaging for Claude Code
 
 Usage:
-  claude-peers broker        Start the broker daemon
-  claude-peers server        Start MCP stdio server (used by Claude Code)
-  claude-peers status        Show broker status and all peers
-  claude-peers peers         List all peers
-  claude-peers send <id> <msg>  Send a message to a peer
-  claude-peers kill-broker   Stop the broker daemon`)
+  claude-peers init <role> [url]   Generate config (broker or client)
+  claude-peers config              Show current config
+  claude-peers broker              Start the broker daemon
+  claude-peers server              Start MCP stdio server (used by Claude Code)
+  claude-peers status              Show broker status and all peers
+  claude-peers peers               List all peers
+  claude-peers send <id> <msg>     Send a message to a peer
+  claude-peers kill-broker         Stop the broker daemon
+
+Setup:
+  # On the broker machine (e.g. your always-on server):
+  claude-peers init broker
+  claude-peers broker
+
+  # On each client machine:
+  claude-peers init client http://<broker-ip>:7899`)
 }
 
 func cliFetch(path string, body any, result any) error {
-	url := "http://127.0.0.1:" + brokerPort()
 	data, _ := json.Marshal(body)
 	client := http.Client{Timeout: 3 * time.Second}
 
 	var resp *http.Response
 	var err error
 	if body != nil {
-		resp, err = client.Post(url+path, "application/json", bytes.NewReader(data))
+		resp, err = client.Post(cfg.BrokerURL+path, "application/json", bytes.NewReader(data))
 	} else {
-		resp, err = client.Get(url + path)
+		resp, err = client.Get(cfg.BrokerURL + path)
 	}
 	if err != nil {
 		return err
@@ -92,21 +106,31 @@ func cliFetch(path string, body any, result any) error {
 	return nil
 }
 
+func cliShowConfig() {
+	fmt.Printf("Config: %s\n\n", configPath())
+	fmt.Printf("  role:         %s\n", cfg.Role)
+	fmt.Printf("  machine_name: %s\n", cfg.MachineName)
+	fmt.Printf("  broker_url:   %s\n", cfg.BrokerURL)
+	fmt.Printf("  listen:       %s\n", cfg.Listen)
+	fmt.Printf("  db_path:      %s\n", cfg.DBPath)
+	fmt.Printf("  stale_timeout: %ds\n", cfg.StaleTimeout)
+}
+
 func cliStatus() {
 	var health HealthResponse
 	if err := cliFetch("/health", nil, &health); err != nil {
-		fmt.Println("Broker is not running.")
+		fmt.Printf("Broker at %s is not reachable.\n", cfg.BrokerURL)
 		return
 	}
-	fmt.Printf("Broker: %s (%d peer(s) registered)\n", health.Status, health.Peers)
-	fmt.Printf("URL: %s\n", "http://127.0.0.1:"+brokerPort())
+	fmt.Printf("Broker: %s (%d peer(s), host: %s)\n", health.Status, health.Peers, health.Machine)
+	fmt.Printf("URL: %s\n", cfg.BrokerURL)
 
 	if health.Peers > 0 {
 		var peers []Peer
-		cliFetch("/list-peers", ListPeersRequest{Scope: "machine", CWD: "/"}, &peers)
+		cliFetch("/list-peers", ListPeersRequest{Scope: "all"}, &peers)
 		fmt.Println("\nPeers:")
 		for _, p := range peers {
-			fmt.Printf("  %s  PID:%d  %s\n", p.ID, p.PID, p.CWD)
+			fmt.Printf("  %s  [%s]  PID:%d  %s\n", p.ID, p.Machine, p.PID, p.CWD)
 			if p.Summary != "" {
 				fmt.Printf("         %s\n", p.Summary)
 			}
@@ -120,8 +144,8 @@ func cliStatus() {
 
 func cliPeers() {
 	var peers []Peer
-	if err := cliFetch("/list-peers", ListPeersRequest{Scope: "machine", CWD: "/"}, &peers); err != nil {
-		fmt.Println("Broker is not running.")
+	if err := cliFetch("/list-peers", ListPeersRequest{Scope: "all"}, &peers); err != nil {
+		fmt.Printf("Broker at %s is not reachable.\n", cfg.BrokerURL)
 		return
 	}
 	if len(peers) == 0 {
@@ -129,7 +153,7 @@ func cliPeers() {
 		return
 	}
 	for _, p := range peers {
-		fmt.Printf("%s  PID:%d  %s\n", p.ID, p.PID, p.CWD)
+		fmt.Printf("%s  [%s]  PID:%d  %s\n", p.ID, p.Machine, p.PID, p.CWD)
 		if p.Summary != "" {
 			fmt.Printf("  Summary: %s\n", p.Summary)
 		}
@@ -162,8 +186,12 @@ func cliKillBroker() {
 	}
 	fmt.Printf("Broker has %d peer(s). Shutting down...\n", health.Peers)
 
-	// Find and kill the process on the broker port
-	out, err := execOutput("lsof", "-ti", ":"+brokerPort())
+	port := strings.TrimPrefix(cfg.Listen, "0.0.0.0:")
+	if strings.Contains(port, ":") {
+		parts := strings.Split(port, ":")
+		port = parts[len(parts)-1]
+	}
+	out, err := execOutput("lsof", "-ti", ":"+port)
 	if err != nil {
 		fmt.Println("Could not find broker process.")
 		return
