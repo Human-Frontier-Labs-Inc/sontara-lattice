@@ -111,7 +111,7 @@ func (b *Broker) recentEvents(limit int) []Event {
 func (b *Broker) cleanStalePeers() {
 	timeout := cfg.StaleTimeout
 	if timeout <= 0 {
-		timeout = 45
+		timeout = 300
 	}
 	cutoff := time.Now().UTC().Add(-time.Duration(timeout) * time.Second).Format(time.RFC3339)
 	b.db.Exec("DELETE FROM peers WHERE last_seen < ?", cutoff)

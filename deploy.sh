@@ -48,7 +48,7 @@ while IFS= read -r line; do
   fi
 
   ssh -o ConnectTimeout=5 -o BatchMode=yes "$host" \
-    "pkill -f 'claude-peers server' 2>/dev/null; pkill -f 'claude-peers broker' 2>/dev/null; true" 2>/dev/null
+    "pkill -f 'claude-peers server' 2>/dev/null; pkill -f 'claude-peers broker' 2>/dev/null; pkill -f 'claude-peers supervisor' 2>/dev/null; pkill -f 'claude-peers dream' 2>/dev/null; true" 2>/dev/null
   sleep 0.3
   scp -q "$DIR/$bin" "$host:~/.local/bin/claude-peers" 2>/dev/null && echo "ok" || echo "FAIL"
 done < "$CONF"

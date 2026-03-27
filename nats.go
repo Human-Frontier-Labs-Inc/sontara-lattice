@@ -119,7 +119,7 @@ func (p *NATSPublisher) close() {
 // Each caller should use a unique consumerName to avoid conflicts.
 func subscribeFleet(consumerName string, handler func(FleetEvent)) (*nats.Conn, error) {
 	nc, err := nats.Connect(natsURL(),
-		nats.Name("claude-peers-dream"),
+		nats.Name("claude-peers-"+consumerName),
 		nats.ReconnectWait(2*time.Second),
 		nats.MaxReconnects(-1),
 	)

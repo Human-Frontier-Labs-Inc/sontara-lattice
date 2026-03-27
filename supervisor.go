@@ -37,6 +37,7 @@ type DaemonRun struct {
 type Supervisor struct {
 	daemons    []DaemonConfig
 	agentBin   string
+	nats       *NATSPublisher
 	mu         sync.Mutex
 	running    map[string]bool
 	history    []DaemonRun
@@ -51,6 +52,7 @@ func newSupervisor(daemonDir, agentBin string) (*Supervisor, error) {
 	return &Supervisor{
 		daemons:    daemons,
 		agentBin:   agentBin,
+		nats:       newNATSPublisher(),
 		running:    make(map[string]bool),
 		maxHistory: 100,
 	}, nil
@@ -246,9 +248,7 @@ func (s *Supervisor) invoke(d DaemonConfig, trigger string) {
 	}
 
 	// Publish result to NATS
-	if cfg.BrokerURL != "" {
-		publishDaemonResult(d.Name, run)
-	}
+	s.publishResult(d.Name, run)
 
 	s.mu.Lock()
 	s.history = append(s.history, run)
@@ -258,19 +258,15 @@ func (s *Supervisor) invoke(d DaemonConfig, trigger string) {
 	s.mu.Unlock()
 }
 
-func publishDaemonResult(name string, run DaemonRun) {
-	pub := newNATSPublisher()
-	if pub == nil {
+func (s *Supervisor) publishResult(name string, run DaemonRun) {
+	if s.nats == nil {
 		return
 	}
-	defer pub.close()
-
 	summary := run.Output
 	if len(summary) > 500 {
 		summary = summary[len(summary)-500:]
 	}
-
-	pub.publish("fleet.daemon."+name, FleetEvent{
+	s.nats.publish("fleet.daemon."+name, FleetEvent{
 		Type:    "daemon_" + run.Status,
 		PeerID:  name,
 		Machine: cfg.MachineName,
