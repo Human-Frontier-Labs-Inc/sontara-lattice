@@ -1,79 +1,119 @@
 @startuml architecture
-skinparam backgroundColor white
+skinparam backgroundColor #0B0C16
 skinparam defaultFontName monospaced
+skinparam defaultFontColor #ddf7ff
 skinparam shadowing false
+skinparam roundCorner 8
+skinparam ArrowColor #50f7d4
+skinparam RectangleBorderColor #1a1c30
+skinparam RectangleBackgroundColor #0f1019
+skinparam NodeBorderColor #1a1c30
+skinparam NodeBackgroundColor #0f1019
+skinparam DatabaseBorderColor #1a1c30
+skinparam DatabaseBackgroundColor #0f1019
+skinparam QueueBorderColor #1a1c30
+skinparam QueueBackgroundColor #0f1019
+skinparam CloudBorderColor #1a1c30
+skinparam CloudBackgroundColor #0f1019
+skinparam NoteBorderColor #1a1c30
+skinparam NoteBackgroundColor #0f1019
 
-title claude-peers: Fleet Architecture
+title <color:#82FB9C>claude-peers</color>: Fleet Architecture (2026-03-27)
 
-node "ubuntu-homelab (broker machine)" as homelab {
-  [Broker :7899] as broker
-  database "SQLite" as db
-  queue "NATS JetStream\n:4222" as nats
+node "<color:#82FB9C>ubuntu-homelab</color> (broker machine)" as homelab {
+  [<color:#50f7d4>Broker :7899</color>\nHTTP + Bearer auth] as broker
+  database "<color:#50f7d4>SQLite</color>" as db
+  queue "<color:#7cf8f7>NATS JetStream</color>\n:4222 (token auth)\n:8222 (monitor)" as nats
+  [<color:#D97757>Supervisor</color>\n6 daemons] as super
   [Dream Watch] as dream
-  [Supervisor] as super
 
   broker -down-> db : persist
   broker -down-> nats : publish events
   dream -down-> nats : subscribe fleet.>
-  super -down-> nats : trigger daemons
+  super -down-> nats : daemon results
 }
 
-cloud "LiteLLM :4000" as litellm {
-  [Claude Opus/Sonnet] as claude_models
-  [Qwen 9B local] as qwen
+cloud "<color:#50f7d4>LiteLLM :4000</color>" as litellm {
+  [Claude Haiku] as haiku
+  [Claude Sonnet] as sonnet
+  [Claude Opus] as opus
 }
 
-super ..> litellm : daemon workflows
+cloud "<color:#829dd4>Docker</color>" as docker {
+  [Convex] as convex
+  [Kokoro TTS] as kokoro
+  [SearXNG] as searx
+  [Transiter + Postgres] as transiter
+}
 
-node "omarchy" as om {
-  [Claude Code] as cc1
+cloud "<color:#a4ffec>Cloudflare</color>" as cf {
+  [coparency.humanfrontiertests.com] as cf1
+  [convex.humanfrontiertests.com] as cf2
+}
+
+super ..> litellm : daemon workflows\n(Haiku default, Sonnet for PR)
+
+node "<color:#82FB9C>omarchy</color>" as om {
+  [Claude Code x3] as cc1
   [MCP Server] as mcp1
+  [Syncthing] as st1
+  [Chezmoi] as chez
   cc1 -down-> mcp1 : stdio
 }
 
-node "macbook1" as mb {
-  [Claude Code] as cc2
-  [MCP Server] as mcp2
-  cc2 -down-> mcp2 : stdio
+node "<color:#82FB9C>raspdeck</color>" as rp {
+  [<color:#7cf8f7>Gridwatch :8888</color>\n4 pages + ticker] as gw
+  [Service Monitor] as svcmon
+  [Firefox Kiosk] as kiosk
+  kiosk -down-> gw : localhost
+  svcmon -down-> gw : feeds data
 }
 
-node "thinkbook" as tb {
-  [Claude Code] as cc3
-  [MCP Server] as mcp3
-  cc3 -down-> mcp3 : stdio
+node "<color:#D97757>willyv4</color>" as v4 {
+  [Ghostbox] as ghost
+  [Alarm System\nSpeaker + LED + TTS] as alarm
+  [Awareness Engine\n7 sensors] as aware
+  ghost -down-> alarm : critical events
+  ghost -down-> aware : state
 }
 
-node "raspdeck" as rp {
-  [Claude Code] as cc4
-  [MCP Server] as mcp4
-  [Gridwatch\nDashboard] as gw
-  cc4 -down-> mcp4 : stdio
+node "macbook1 + thinkbook" as laptops {
+  [Claude Code] as cc_lap
+  [MCP Servers] as mcp_lap
+  cc_lap -down-> mcp_lap : stdio
 }
 
-mcp1 --> broker : register / heartbeat\nsend + poll messages
-mcp2 --> broker : Tailscale
-mcp3 --> broker : Tailscale
-mcp4 --> broker : Tailscale
+mcp1 --> broker : register / heartbeat\nmessages (Bearer auth)
+mcp_lap --> broker : Tailscale mesh
 gw --> broker : poll peers + events
+svcmon --> homelab : SSH stats\nHTTP health checks
+svcmon --> docker : container status
+svcmon --> cf : tunnel latency
 
-note right of mcp1
-  --dangerously-load-development-channels
-  Required for live message delivery.
-  Messages arrive via channel notification
-  directly into Claude's session.
-end note
+gw --> nats : <color:#50f872>fleet.gridwatch.*</color>\nticker events
+ghost --> nats : subscribe\n<color:#ff6b6b>critical = alarm</color>
 
-note bottom of dream
-  Writes fleet-activity.md
-  to Claude memory path.
-  Every new session knows
-  what the fleet was doing.
-end note
+st1 <--> homelab : Syncthing sync\n82GB projects
 
 note bottom of super
-  4 daemons: fleet-scout,
-  pr-helper, llm-watchdog,
-  fleet-memory. Policy-
-  constrained, auto-triggered.
+  <color:#7cf8f7>FM</color> fleet-memory (event, haiku)
+  <color:#50f872>FS</color> fleet-scout (15m, haiku)
+  <color:#D97757>LW</color> llm-watchdog (15m, haiku)
+  <color:#829dd4>PR</color> pr-helper (30m, sonnet)
+  <color:#a4ffec>SJ</color> sync-janitor (30m, haiku)
+  <color:#a4ffec>LB</color> librarian (6h, haiku)
+end note
+
+note right of gw
+  Pages: Fleet | Services
+  NATS | Agents
+  Ticker: rAF scroll, 5min TTL
+  All events -> NATS
+end note
+
+note bottom of ghost
+  Subscribes fleet.gridwatch.*
+  level=critical -> alarm
+  Speaker + red LED + TTS
 end note
 @enduml

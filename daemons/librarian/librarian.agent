@@ -5,7 +5,7 @@
 NAME librarian
 
 INPUT gridwatch_url DEFAULT "http://localhost:8888"
-INPUT report_to DEFAULT "willy@humanfrontierlabs.com"
+INPUT report_to DEFAULT "vansicklewilly@gmail.com"
 
 AGENT librarian """You are the fleet librarian. Your job is to compare live fleet state
 against documentation on every machine and report what's outdated, wrong, or missing.

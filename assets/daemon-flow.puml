@@ -1,71 +1,76 @@
 @startuml daemon-flow
-skinparam backgroundColor white
+skinparam backgroundColor #0B0C16
 skinparam defaultFontName monospaced
+skinparam defaultFontColor #ddf7ff
 skinparam shadowing false
+skinparam ArrowColor #50f7d4
+skinparam SequenceLifeLineBorderColor #1a1c30
+skinparam SequenceParticipantBackgroundColor #0f1019
+skinparam SequenceParticipantBorderColor #1a1c30
+skinparam NoteBackgroundColor #0f1019
+skinparam NoteBorderColor #1a1c30
 
-title Peer Messaging + Daemon Event Flow
+title <color:#82FB9C>Gridwatch + Daemon Event Flow</color>
 
 actor "Developer" as dev
-participant "Claude A\n(omarchy)" as ccA
-participant "MCP Server A" as mcpA
-participant "Broker\n:7899" as broker
-queue "NATS\n:4222" as nats
-participant "MCP Server B" as mcpB
-participant "Claude B\n(thinkbook)" as ccB
-participant "Supervisor" as super
+participant "<color:#82FB9C>Claude A</color>\n(omarchy)" as ccA
+participant "MCP\nServer" as mcpA
+participant "<color:#50f7d4>Broker</color>\n:7899" as broker
+queue "<color:#7cf8f7>NATS</color>\n:4222" as nats
+participant "<color:#D97757>Supervisor</color>" as super
 participant "Agent\n(daemon)" as agent
-participant "LiteLLM\n:4000" as llm
+participant "<color:#50f7d4>LiteLLM</color>\n:4000" as llm
+participant "<color:#7cf8f7>Gridwatch</color>\n:8888" as gw
+participant "<color:#D97757>Ghostbox</color>\n(willyv4)" as ghost
 
-== Real-Time Peer Messaging ==
+== Peer Messaging (Bearer Auth) ==
 
 dev -> ccA : "send message to peer B"
 ccA -> mcpA : tools/call: send_message
-mcpA -> broker : POST /send-message
+mcpA -> broker : POST /send-message\nAuthorization: Bearer <secret>
 broker -> nats : fleet.message
 
-mcpB -> broker : POST /poll-messages (1s loop)
-broker --> mcpB : message payload
-mcpB -> ccB : channel notification\n(--dangerously-load-development-channels)
+== Daemon Execution (Haiku/Sonnet via LiteLLM) ==
 
-note over ccB
-  Message appears live
-  in Claude B's session.
-  No user action needed.
-end note
-
-ccB -> mcpB : tools/call: send_message (reply)
-mcpB -> broker : POST /send-message
-mcpA -> broker : POST /poll-messages
-broker --> mcpA : reply payload
-mcpA -> ccA : channel notification
-
-== Autonomous Daemon Execution ==
-
-nats -> super : fleet event or\ninterval trigger
+nats -> super : event trigger\nor interval tick
+super -> super : cooldown check\n(5min after failure)
 super -> agent : spawn Agentfile\n+ policy.toml
-agent -> llm : Claude Sonnet\nor Qwen 9B
+agent -> llm : claude-haiku\nor claude-sonnet
 llm --> agent : LLM response
-agent -> agent : bash / read / write
-agent --> super : result
-super -> nats : fleet.daemon.complete
+agent -> agent : bash / read
+agent --> super : JSON result\n{"Outputs":{"goal":"..."}}
+super -> super : extract Outputs
+super -> nats : fleet.daemon.<name>\n(parsed output, not banner)
 
 note over agent
   Policy enforced:
   tool allowlist,
-  max 5min runtime,
-  max 50 tool calls
+  model per daemon
 end note
 
-== Fleet Memory ==
+== Gridwatch Monitoring ==
 
-nats -> broker : all events persisted
-broker -> broker : dream-watch consolidates
-broker --> mcpA : fleet-activity.md\n(Claude memory path)
-broker --> mcpB : fleet-activity.md
+gw -> broker : poll /list-peers\npoll /events
+gw -> gw : SSH stats (7 machines)\nHTTP checks (9 services)\nDocker inspect (7 containers)
+gw -> gw : ticker.Push()\n(service change, disk alert,\ndaemon result, peer join)
+gw -> nats : fleet.gridwatch.<type>\nlevel=info/warn/error/critical
 
-note over broker
-  New sessions on any
-  machine read the fleet
-  briefing on startup.
+== Physical Alert (Critical Only) ==
+
+nats -> ghost : fleet.gridwatch.*
+ghost -> ghost : level == critical?
+
+note over ghost
+  critical triggers:
+  wake + red LED +
+  TTS alarm on speaker
+  until button dismiss
 end note
+
+== Ticker Event Bus ==
+
+gw -> gw : /api/ticker\nring buffer, 5min TTL\nnewest first, seed burst skip
+gw -> gw : /api/services\nHTTP, Docker, Syncthing,\ntunnels, chezmoi, systemd
+gw -> gw : /api/nats-stats\nvarz, connz, jsz
+
 @enduml
