@@ -79,41 +79,71 @@ func splitNonEmpty(s string) []string {
 	return result
 }
 
+// autoProject returns a short project name from the git root or CWD.
+func autoProject(cwd, root string) string {
+	if root != "" {
+		return filepath.Base(root)
+	}
+	// Trim home dir prefix for readability.
+	home, _ := os.UserHomeDir()
+	rel := cwd
+	if home != "" && strings.HasPrefix(cwd, home) {
+		rel = strings.TrimPrefix(cwd, home+"/")
+	}
+	// Use first two path segments max.
+	parts := strings.SplitN(rel, "/", 3)
+	if len(parts) > 2 {
+		return parts[0] + "/" + parts[1]
+	}
+	return rel
+}
+
+// autoName generates a readable peer name from machine + project.
+func autoName(machine, project string) string {
+	if project == "" {
+		return machine
+	}
+	return machine + "/" + project
+}
+
 func generateSummary(cwd, root, branch string, files []string) string {
+	// Try LiteLLM on the broker machine first, then fall back to Anthropic API.
 	apiKey := cmp.Or(
+		os.Getenv("OPENAI_API_KEY"),
+		os.Getenv("LITELLM_API_KEY"),
 		os.Getenv("ANTHROPIC_AUTH_TOKEN"),
 		os.Getenv("ANTHROPIC_API_KEY"),
-		os.Getenv("LITELLM_API_KEY"),
 		readClaudeSettingsKey(),
 	)
 	baseURL := cmp.Or(
-		os.Getenv("ANTHROPIC_BASE_URL"),
 		os.Getenv("LITELLM_BASE_URL"),
-		"https://litellm.justworksai.net",
+		os.Getenv("ANTHROPIC_BASE_URL"),
+		cfg.LLMBaseURL,
 	)
-	if apiKey == "" {
+	if apiKey == "" || baseURL == "" {
 		return ""
 	}
 
 	var parts []string
-	parts = append(parts, "Working directory: "+cwd)
+	parts = append(parts, "Dir: "+cwd)
 	if root != "" {
-		parts = append(parts, "Git repo root: "+root)
+		parts = append(parts, "Repo: "+filepath.Base(root))
 	}
 	if branch != "" {
 		parts = append(parts, "Branch: "+branch)
 	}
 	if len(files) > 0 {
-		parts = append(parts, "Recently modified files: "+strings.Join(files, ", "))
+		parts = append(parts, "Recent files: "+strings.Join(files, ", "))
 	}
 
+	model := cmp.Or(os.Getenv("CLAUDE_PEERS_SUMMARY_MODEL"), "claude-haiku")
 	body, _ := json.Marshal(map[string]any{
-		"model": "gpt-5.4",
+		"model": model,
 		"messages": []map[string]string{
-			{"role": "system", "content": "You generate brief summaries of what a developer is working on based on their project context. Respond with exactly 1-2 sentences, no more. Be specific about the project name and likely task."},
-			{"role": "user", "content": "Based on this context, what is this developer likely working on?\n\n" + strings.Join(parts, "\n")},
+			{"role": "system", "content": "One sentence: what is this developer doing right now? Be specific. No preamble."},
+			{"role": "user", "content": strings.Join(parts, "\n")},
 		},
-		"max_tokens": 100,
+		"max_tokens": 60,
 	})
 
 	client := http.Client{Timeout: 5 * time.Second}

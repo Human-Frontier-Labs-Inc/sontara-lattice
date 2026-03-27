@@ -109,13 +109,15 @@ func runServer(ctx context.Context) error {
 	root := gitRoot(cwd)
 	tty := getTTY()
 	branch := gitBranch(cwd)
-	files := recentFiles(cwd, 10)
+	project := autoProject(cwd, root)
+	name := autoName(cfg.MachineName, project)
 
-	logMCP("Machine: %s", cfg.MachineName)
+	logMCP("Name: %s", name)
 	logMCP("CWD: %s", cwd)
-	logMCP("Git root: %s", root)
 	logMCP("Broker: %s", cfg.BrokerURL)
 
+	// Generate LLM summary in background (non-blocking).
+	files := recentFiles(cwd, 10)
 	summaryCh := make(chan string, 1)
 	go func() {
 		summaryCh <- generateSummary(cwd, root, branch, files)
@@ -125,11 +127,8 @@ func runServer(ctx context.Context) error {
 	select {
 	case s := <-summaryCh:
 		initialSummary = s
-		if s != "" {
-			logMCP("Auto-summary: %s", s)
-		}
-	case <-time.After(3 * time.Second):
-		logMCP("Auto-summary timed out (non-blocking)")
+	case <-time.After(5 * time.Second):
+		logMCP("Auto-summary timed out")
 	}
 
 	var reg RegisterResponse
@@ -139,24 +138,40 @@ func runServer(ctx context.Context) error {
 		CWD:     cwd,
 		GitRoot: root,
 		TTY:     tty,
+		Name:    name,
+		Project: project,
+		Branch:  branch,
 		Summary: initialSummary,
 	}, &reg); err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
 	myID := reg.ID
-	logMCP("Registered as peer %s on %s", myID, cfg.MachineName)
+	logMCP("Registered as %s (%s)", name, myID)
 
-	// Fetch fleet memory from broker and write locally
+	// Fetch fleet memory from broker and write locally.
 	go syncFleetMemory()
 
+	// Apply late summary if initial timed out.
 	if initialSummary == "" {
 		go func() {
 			if s := <-summaryCh; s != "" {
 				brokerFetch("/set-summary", SetSummaryRequest{ID: myID, Summary: s}, nil)
-				logMCP("Late auto-summary applied: %s", s)
+				logMCP("Summary: %s", s)
 			}
 		}()
 	}
+
+	// Refresh summary periodically (every 5 min) so it stays current.
+	go func() {
+		for {
+			time.Sleep(5 * time.Minute)
+			newBranch := gitBranch(cwd)
+			newFiles := recentFiles(cwd, 10)
+			if s := generateSummary(cwd, root, newBranch, newFiles); s != "" {
+				brokerFetch("/set-summary", SetSummaryRequest{ID: myID, Summary: s}, nil)
+			}
+		}
+	}()
 
 	t := newMCPTransport()
 

@@ -45,12 +45,18 @@ func newBroker() (*Broker, error) {
 			cwd TEXT NOT NULL,
 			git_root TEXT,
 			tty TEXT,
+			name TEXT NOT NULL DEFAULT '',
+			project TEXT NOT NULL DEFAULT '',
+			branch TEXT NOT NULL DEFAULT '',
 			summary TEXT NOT NULL DEFAULT '',
 			registered_at TEXT NOT NULL,
 			last_seen TEXT NOT NULL
 		)`,
-		// Migration: add machine column if missing (existing databases).
+		// Migrations: add columns if missing (existing databases).
 		`ALTER TABLE peers ADD COLUMN machine TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE peers ADD COLUMN name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE peers ADD COLUMN project TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE peers ADD COLUMN branch TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			from_id TEXT NOT NULL,
@@ -155,8 +161,8 @@ func (b *Broker) register(req RegisterRequest) RegisterResponse {
 	b.db.Exec("DELETE FROM peers WHERE pid = ? AND machine = ?", req.PID, req.Machine)
 
 	b.db.Exec(
-		"INSERT INTO peers (id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		id, req.PID, req.Machine, req.CWD, req.GitRoot, req.TTY, req.Summary, now, now,
+		"INSERT INTO peers (id, pid, machine, cwd, git_root, tty, name, project, branch, summary, registered_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		id, req.PID, req.Machine, req.CWD, req.GitRoot, req.TTY, req.Name, req.Project, req.Branch, req.Summary, now, now,
 	)
 	b.emitEvent("peer_joined", id, req.Machine, req.Summary)
 	b.nats.publish("fleet.peer.joined", FleetEvent{
@@ -184,25 +190,25 @@ func (b *Broker) listPeers(req ListPeersRequest) []Peer {
 
 	switch req.Scope {
 	case "directory":
-		query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE cwd = ?"
+		query = "SELECT id, pid, machine, cwd, git_root, tty, name, project, branch, summary, registered_at, last_seen FROM peers WHERE cwd = ?"
 		args = []any{req.CWD}
 	case "repo":
 		if req.GitRoot != "" {
-			query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE git_root = ?"
+			query = "SELECT id, pid, machine, cwd, git_root, tty, name, project, branch, summary, registered_at, last_seen FROM peers WHERE git_root = ?"
 			args = []any{req.GitRoot}
 		} else {
-			query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE cwd = ?"
+			query = "SELECT id, pid, machine, cwd, git_root, tty, name, project, branch, summary, registered_at, last_seen FROM peers WHERE cwd = ?"
 			args = []any{req.CWD}
 		}
 	case "machine":
 		if req.Machine != "" {
-			query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers WHERE machine = ?"
+			query = "SELECT id, pid, machine, cwd, git_root, tty, name, project, branch, summary, registered_at, last_seen FROM peers WHERE machine = ?"
 			args = []any{req.Machine}
 		} else {
-			query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers"
+			query = "SELECT id, pid, machine, cwd, git_root, tty, name, project, branch, summary, registered_at, last_seen FROM peers"
 		}
 	default: // "all" or empty = everything
-		query = "SELECT id, pid, machine, cwd, git_root, tty, summary, registered_at, last_seen FROM peers"
+		query = "SELECT id, pid, machine, cwd, git_root, tty, name, project, branch, summary, registered_at, last_seen FROM peers"
 	}
 
 	rows, err := b.db.Query(query, args...)
@@ -215,7 +221,7 @@ func (b *Broker) listPeers(req ListPeersRequest) []Peer {
 	for rows.Next() {
 		var p Peer
 		var gitRoot, tty sql.NullString
-		rows.Scan(&p.ID, &p.PID, &p.Machine, &p.CWD, &gitRoot, &tty, &p.Summary, &p.RegisteredAt, &p.LastSeen)
+		rows.Scan(&p.ID, &p.PID, &p.Machine, &p.CWD, &gitRoot, &tty, &p.Name, &p.Project, &p.Branch, &p.Summary, &p.RegisteredAt, &p.LastSeen)
 		p.GitRoot = gitRoot.String
 		p.TTY = tty.String
 

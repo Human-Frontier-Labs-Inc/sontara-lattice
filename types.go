@@ -10,6 +10,9 @@ type Peer struct {
 	CWD          string `json:"cwd"`
 	GitRoot      string `json:"git_root"`
 	TTY          string `json:"tty"`
+	Name         string `json:"name"`    // auto-generated: machine/project
+	Project      string `json:"project"` // repo or directory name
+	Branch       string `json:"branch"`  // git branch
 	Summary      string `json:"summary"`
 	RegisteredAt string `json:"registered_at"`
 	LastSeen     string `json:"last_seen"`
@@ -33,6 +36,9 @@ type RegisterRequest struct {
 	CWD     string `json:"cwd"`
 	GitRoot string `json:"git_root"`
 	TTY     string `json:"tty"`
+	Name    string `json:"name"`
+	Project string `json:"project"`
+	Branch  string `json:"branch"`
 	Summary string `json:"summary"`
 }
 
