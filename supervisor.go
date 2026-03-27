@@ -20,6 +20,7 @@ type DaemonConfig struct {
 	AgentFile  string
 	ConfigFile string
 	PolicyFile string
+	TriageFile string // optional triage.sh -- if exit 0, run agent; if exit 1, skip
 	Schedule   string // "cron:*/15 * * * *" or "event:fleet.peer.joined" or "interval:5m"
 }
 
@@ -109,12 +110,18 @@ func discoverDaemons(dir string) ([]DaemonConfig, error) {
 			policyFile = ""
 		}
 
+		triageFile := filepath.Join(dDir, "triage.sh")
+		if _, err := os.Stat(triageFile); err != nil {
+			triageFile = ""
+		}
+
 		daemons = append(daemons, DaemonConfig{
 			Name:       e.Name(),
 			Dir:        dDir,
 			AgentFile:  agentFile,
 			ConfigFile: configFile,
 			PolicyFile: policyFile,
+			TriageFile: triageFile,
 			Schedule:   schedule,
 		})
 	}
@@ -124,7 +131,11 @@ func discoverDaemons(dir string) ([]DaemonConfig, error) {
 func (s *Supervisor) run(ctx context.Context) {
 	log.Printf("[supervisor] discovered %d daemon(s)", len(s.daemons))
 	for _, d := range s.daemons {
-		log.Printf("[supervisor]   %s (%s)", d.Name, d.Schedule)
+		triage := ""
+		if d.TriageFile != "" {
+			triage = " +triage"
+		}
+		log.Printf("[supervisor]   %s (%s%s)", d.Name, d.Schedule, triage)
 	}
 
 	var wg sync.WaitGroup
@@ -225,6 +236,25 @@ func (s *Supervisor) invoke(d DaemonConfig, trigger string) {
 		s.mu.Unlock()
 	}()
 
+	// Triage: if triage.sh exists, run it first. Exit 0 = work to do. Exit 1 = skip.
+	if d.TriageFile != "" {
+		triage := exec.Command("bash", d.TriageFile)
+		triage.Dir = d.Dir
+		triage.Env = os.Environ()
+		triageOut, triageErr := triage.CombinedOutput()
+		reason := strings.TrimSpace(string(triageOut))
+		if triageErr != nil {
+			if reason == "" {
+				reason = "no work"
+			}
+			log.Printf("[supervisor] %s: triage skip (%s)", d.Name, reason)
+			s.publishTriage(d.Name, "skip", reason)
+			return
+		}
+		log.Printf("[supervisor] %s: triage pass (%s)", d.Name, reason)
+		s.publishTriage(d.Name, "pass", reason)
+	}
+
 	run := DaemonRun{
 		Daemon:    d.Name,
 		StartedAt: time.Now(),
@@ -279,6 +309,19 @@ func (s *Supervisor) invoke(d DaemonConfig, trigger string) {
 		s.history = s.history[len(s.history)-s.maxHistory:]
 	}
 	s.mu.Unlock()
+}
+
+func (s *Supervisor) publishTriage(name, outcome, reason string) {
+	if s.nats == nil {
+		return
+	}
+	s.nats.publish("fleet.daemon."+name, FleetEvent{
+		Type:    "daemon_triage",
+		PeerID:  name,
+		Machine: cfg.MachineName,
+		Summary: reason,
+		Data:    "outcome=" + outcome,
+	})
 }
 
 func (s *Supervisor) publishResult(name string, run DaemonRun) {

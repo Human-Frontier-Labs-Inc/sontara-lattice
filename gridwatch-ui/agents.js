@@ -80,11 +80,14 @@ function updateDaemonsPage(natsData) {
     const history = daemonHistory[name] || [];
     const latest = history[history.length - 1];
     const status = latest
-      ? (latest.type === 'daemon_complete' ? 'complete' : latest.type === 'daemon_failed' ? 'failed' : 'idle')
+      ? (latest.type === 'daemon_complete' ? 'complete'
+        : latest.type === 'daemon_failed' ? 'failed'
+        : latest.type === 'daemon_triage' ? 'triage'
+        : 'idle')
       : 'idle';
 
     const dataStr = latest?.data || '';
-    const trigger = dataStr.match(/trigger=(\S+)/)?.[1] || '-';
+    const trigger = dataStr.match(/trigger=(\S+)/)?.[1] || dataStr.match(/outcome=(\S+)/)?.[1] || '-';
     const duration = dataStr.match(/duration=(\S+)/)?.[1] || '-';
     const lastRun = latest?.timestamp ? timeAgo(latest.timestamp) : '-';
     const ok = history.filter(r => r.type === 'daemon_complete').length;
@@ -133,7 +136,9 @@ function updateDaemonsPage(natsData) {
       </div>
       ${output
         ? `<div class="dmn-output"><div class="dmn-output-text" style="-webkit-line-clamp:${lineClamp}">${esc(output)}</div></div>`
-        : '<div class="dmn-waiting">awaiting first run</div>'}
+        : status === 'triage'
+          ? `<div class="dmn-waiting">triage: ${esc(latest?.summary || 'skipped')}</div>`
+          : '<div class="dmn-waiting">awaiting first run</div>'}
     </div>`;
   }
 
