@@ -2,69 +2,51 @@
 skinparam backgroundColor white
 skinparam defaultFontName monospaced
 skinparam shadowing false
-skinparam ArrowColor #333333
+skinparam ArrowColor #444
+skinparam ActivityBackgroundColor #f8f8f8
+skinparam ActivityBorderColor #ccc
 
-title **Gridwatch + Daemon Event Flow**
+title Daemon Lifecycle: Triage -> Execute -> Publish
 
-actor "Developer" as dev
-participant "**Claude A**\n(omarchy)" as ccA
-participant "MCP\nServer" as mcpA
-participant "Broker**\n:7899" as broker
-queue "NATS**\n:4222" as nats
-participant "Supervisor**" as super
-participant "Agent\n(daemon)" as agent
-participant "LiteLLM**\n:4000" as llm
-participant "Gridwatch**\n:8888" as gw
-participant "Ghostbox**\n(willyv4)" as ghost
+start
 
-== Peer Messaging (Bearer Auth) ==
+:Schedule fires\n(interval or NATS event);
 
-dev -> ccA : "send message to peer B"
-ccA -> mcpA : tools/call: send_message
-mcpA -> broker : POST /send-message\nAuthorization: Bearer <secret>
-broker -> nats : fleet.message
+if (Already running?) then (yes)
+  :skip;
+  stop
+endif
 
-== Daemon Execution (Haiku/Sonnet via LiteLLM) ==
+if (Failed recently?) then (yes, <5min)
+  :cooldown skip;
+  stop
+endif
 
-nats -> super : event trigger\nor interval tick
-super -> super : cooldown check\n(5min after failure)
-super -> agent : spawn Agentfile\n+ policy.toml
-agent -> llm : claude-haiku\nor claude-sonnet
-llm --> agent : LLM response
-agent -> agent : bash / read
-agent --> super : JSON result\n{"Outputs":{"goal":"..."}}
-super -> super : extract Outputs
-super -> nats : fleet.daemon.<name>\n(parsed output, not banner)
+if (triage.sh exists?) then (yes)
+  :Run **triage.sh**\n(bash, zero cost);
+  if (exit code?) then (exit 1)
+    :No work needed\n**skip** (free);
+    :Publish triage_skip\nto NATS;
+    stop
+  else (exit 0)
+    :Work found;
+  endif
+endif
 
-note over agent
-  Policy enforced:
-  tool allowlist,
-  model per daemon
-end note
+:Run **agent**\n(Haiku/Sonnet via LiteLLM);
 
-== Gridwatch Monitoring ==
+if (Agent result?) then (success)
+  :Extract output from\nJSON envelope;
+  :Publish **daemon_complete**\nto NATS;
+else (failure)
+  :Set 5min cooldown;
+  :Publish **daemon_failed**\nto NATS;
+endif
 
-gw -> broker : poll /list-peers\npoll /events
-gw -> gw : SSH stats (7 machines)\nHTTP checks (9 services)\nDocker inspect (7 containers)
-gw -> gw : ticker.Push()\n(service change, disk alert,\ndaemon result, peer join)
-gw -> nats : fleet.gridwatch.<type>\nlevel=info/warn/error/critical
+:Gridwatch ticker\npicks up event;
 
-== Physical Alert (Critical Only) ==
+:Dashboard shows\ndaemon output;
 
-nats -> ghost : fleet.gridwatch.*
-ghost -> ghost : level == critical?
-
-note over ghost
-  critical triggers:
-  wake + red LED +
-  TTS alarm on speaker
-  until button dismiss
-end note
-
-== Ticker Event Bus ==
-
-gw -> gw : /api/ticker\nring buffer, 5min TTL\nnewest first, seed burst skip
-gw -> gw : /api/services\nHTTP, Docker, Syncthing,\ntunnels, chezmoi, systemd
-gw -> gw : /api/nats-stats\nvarz, connz, jsz
+stop
 
 @enduml

@@ -2,104 +2,63 @@
 skinparam backgroundColor white
 skinparam defaultFontName monospaced
 skinparam shadowing false
-skinparam roundCorner 8
-skinparam ArrowColor #333333
+skinparam roundCorner 6
+skinparam ArrowColor #444
+skinparam NodeBackgroundColor #f8f8f8
+skinparam NodeBorderColor #ccc
+skinparam QueueBackgroundColor #e8f4e8
+skinparam QueueBorderColor #aaa
+skinparam CloudBackgroundColor #f0f4ff
+skinparam CloudBorderColor #aaa
 
-title claude-peers: Fleet Architecture (2026-03-27)
+title claude-peers: Fleet Architecture
 
-node "ubuntu-homelab (broker machine)" as homelab {
-  [Broker :7899\nHTTP + Bearer auth] as broker
-  database "SQLite" as db
-  queue "NATS JetStream\n:4222 (token auth)\n:8222 (monitor)" as nats
-  [Supervisor\n6 daemons] as super
-  [Dream Watch] as dream
-
-  broker -down-> db : persist
-  broker -down-> nats : publish events
-  dream -down-> nats : subscribe fleet.>
-  super -down-> nats : daemon results
+together {
+  node "omarchy" as om
+  node "macbook1" as mb
+  node "thinkbook" as tb
 }
 
-cloud "LiteLLM :4000" as litellm {
-  [Claude Haiku] as haiku
-  [Claude Sonnet] as sonnet
-  [Claude Opus] as opus
+node "ubuntu-homelab" as homelab {
+  [Broker] as broker
+  queue "NATS" as nats
+  [Supervisor] as super
 }
 
-cloud "Docker" as docker {
-  [Convex] as convex
-  [Kokoro TTS] as kokoro
-  [SearXNG] as searx
-  [Transiter + Postgres] as transiter
-}
-
-cloud "Cloudflare" as cf {
-  [coparency.humanfrontiertests.com] as cf1
-  [convex.humanfrontiertests.com] as cf2
-}
-
-super ..> litellm : daemon workflows\n(Haiku default, Sonnet for PR)
-
-node "omarchy" as om {
-  [Claude Code x3] as cc1
-  [MCP Server] as mcp1
-  [Syncthing] as st1
-  [Chezmoi] as chez
-  cc1 -down-> mcp1 : stdio
-}
+cloud "LiteLLM" as llm
 
 node "raspdeck" as rp {
-  [Gridwatch :8888\n4 pages + ticker] as gw
-  [Service Monitor] as svcmon
-  [Firefox Kiosk] as kiosk
-  kiosk -down-> gw : localhost
-  svcmon -down-> gw : feeds data
+  [Gridwatch] as gw
 }
 
 node "willyv4" as v4 {
   [Ghostbox] as ghost
-  [Alarm System\nSpeaker + LED + TTS] as alarm
-  [Awareness Engine\n7 sensors] as aware
-  ghost -down-> alarm : critical events
-  ghost -down-> aware : state
 }
 
-node "macbook1 + thinkbook" as laptops {
-  [Claude Code] as cc_lap
-  [MCP Servers] as mcp_lap
-  cc_lap -down-> mcp_lap : stdio
-}
+om --> broker : Claude sessions\n(MCP + messages)
+mb --> broker
+tb --> broker
 
-mcp1 --> broker : register / heartbeat\nmessages (Bearer auth)
-mcp_lap --> broker : Tailscale mesh
-gw --> broker : poll peers + events
-svcmon --> homelab : SSH stats\nHTTP health checks
-svcmon --> docker : container status
-svcmon --> cf : tunnel latency
+broker <-> nats : events
 
-gw --> nats : fleet.gridwatch.*\nticker events
-ghost --> nats : subscribe\ncritical = alarm
-st1 <--> homelab : Syncthing sync\n82GB projects
+super --> nats : daemon results
+super ..> llm : triage.sh -> agent\n(Haiku / Sonnet)
+
+gw --> broker : peers + events
+gw --> nats : ticker events
+gw --> homelab : SSH + HTTP\n(service monitoring)
+
+ghost --> nats : subscribe\n(critical = alarm)
 
 note bottom of super
-  FM fleet-memory (event, haiku)
-  FS fleet-scout (15m, haiku)
-  LW llm-watchdog (15m, haiku)
-  PR pr-helper (30m, sonnet)
-  SJ sync-janitor (30m, haiku)
-  LB librarian (6h, haiku)
+  6 daemons with triage:
+  triage.sh (free) -> agent (LLM)
+  skip if no work needed
 end note
 
 note right of gw
-  Pages: Fleet | Services
-  NATS | Agents
-  Ticker: rAF scroll, 5min TTL
-  All events -> NATS
-end note
-
-note bottom of ghost
-  Subscribes fleet.gridwatch.*
-  level=critical -> alarm
-  Speaker + red LED + TTS
+  4-page kiosk dashboard
+  Fleet | Services | NATS | Agents
+  Live scrolling ticker
 end note
 @enduml
