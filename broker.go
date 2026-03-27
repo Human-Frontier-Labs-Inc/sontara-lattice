@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -280,6 +281,17 @@ func (b *Broker) unregister(req UnregisterRequest) {
 	b.db.Exec("DELETE FROM messages WHERE to_id = ? AND delivered = 0", req.ID)
 }
 
+// fleetMemory stores the latest consolidated fleet briefing.
+var fleetMemory string
+
+func (b *Broker) setFleetMemory(content string) {
+	fleetMemory = content
+}
+
+func (b *Broker) getFleetMemory() string {
+	return fleetMemory
+}
+
 func (b *Broker) peerCount() int {
 	var count int
 	b.db.QueryRow("SELECT COUNT(*) FROM peers").Scan(&count)
@@ -417,6 +429,21 @@ func runBroker(ctx context.Context) error {
 			fmt.Sscanf(v, "%d", &limit)
 		}
 		writeJSON(w, b.recentEvents(limit))
+	})
+
+	mux.HandleFunc("GET /fleet-memory", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/markdown")
+		w.Write([]byte(b.getFleetMemory()))
+	})
+
+	mux.HandleFunc("POST /fleet-memory", func(w http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		b.setFleetMemory(string(data))
+		writeJSON(w, map[string]bool{"ok": true})
 	})
 
 	addr := cfg.Listen

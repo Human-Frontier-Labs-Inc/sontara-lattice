@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -137,6 +138,9 @@ func runServer(ctx context.Context) error {
 	myID := reg.ID
 	logMCP("Registered as peer %s on %s", myID, cfg.MachineName)
 
+	// Fetch fleet memory from broker and write locally
+	go syncFleetMemory()
+
 	if initialSummary == "" {
 		go func() {
 			if s := <-summaryCh; s != "" {
@@ -212,6 +216,27 @@ func runServer(ctx context.Context) error {
 	pollCancel()
 	wg.Wait()
 	return nil
+}
+
+func syncFleetMemory() {
+	client := http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(cfg.BrokerURL + "/fleet-memory")
+	if err != nil || resp.StatusCode != 200 {
+		return
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil || len(data) == 0 {
+		return
+	}
+
+	memDir := claudeMemoryDir()
+	os.MkdirAll(memDir, 0755)
+	path := filepath.Join(memDir, "fleet-activity.md")
+	os.WriteFile(path, data, 0644)
+	updateMemoryIndex(memDir)
+	logMCP("Fleet memory synced to %s (%d bytes)", path, len(data))
 }
 
 func handleToolCall(id any, params json.RawMessage, myID, cwd, root string, t *MCPTransport) {

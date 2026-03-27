@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,7 +144,7 @@ func buildFleetMemory(peers []Peer, events []Event) string {
 		}
 	}
 
-	// Recent events
+	// Recent events (deduplicated, skip repetitive summary updates)
 	sb.WriteString("## Recent Activity\n\n")
 	if len(events) == 0 {
 		sb.WriteString("No recent events.\n")
@@ -155,10 +156,17 @@ func buildFleetMemory(peers []Peer, events []Event) string {
 			"message_sent":    "messaged",
 		}
 		shown := 0
+		seen := make(map[string]bool)
 		for _, e := range events {
-			if shown >= 20 {
+			if shown >= 15 {
 				break
 			}
+			// Deduplicate: skip if same peer+type already shown
+			key := e.PeerID + ":" + e.Type
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 			label := typeLabels[e.Type]
 			if label == "" {
 				label = e.Type
@@ -220,7 +228,25 @@ func writeFleetMemory(content string) string {
 	os.WriteFile(path, []byte(content), 0644)
 
 	updateMemoryIndex(memDir)
+
+	// Push to broker so other machines can fetch it on session start
+	pushFleetMemoryToBroker(content)
+
 	return path
+}
+
+func pushFleetMemoryToBroker(content string) {
+	req, err := http.NewRequest("POST", cfg.BrokerURL+"/fleet-memory", strings.NewReader(content))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "text/markdown")
+	client := http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
 }
 
 func claudeMemoryDir() string {
