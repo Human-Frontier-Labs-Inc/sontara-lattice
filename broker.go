@@ -67,12 +67,37 @@ func newBroker() (*Broker, error) {
 			data TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS kv (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)`,
 	} {
 		db.Exec(stmt) // Ignore errors from ALTER (column already exists).
 	}
 
 	b := &Broker{db: db, nats: newNATSPublisher()}
-	b.cleanStalePeers()
+
+	// Restore fleet memory from SQLite if available
+	var mem sql.NullString
+	db.QueryRow("SELECT value FROM kv WHERE key = 'fleet_memory'").Scan(&mem)
+	if mem.Valid {
+		b.fleetMemory = mem.String
+	}
+
+	// Periodic WAL checkpoint + stale cleanup (skip first run)
+	go func() {
+		time.Sleep(time.Duration(cfg.StaleTimeout) * time.Second)
+		for {
+			b.cleanStalePeers()
+			db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+			db.Exec("DELETE FROM messages WHERE delivered = 1 AND sent_at < ?",
+				time.Now().UTC().Add(-1*time.Hour).Format(time.RFC3339))
+			db.Exec("DELETE FROM messages WHERE delivered = 0 AND sent_at < ?",
+				time.Now().UTC().Add(-1*time.Hour).Format(time.RFC3339))
+			time.Sleep(30 * time.Second)
+		}
+	}()
+
 	return b, nil
 }
 
@@ -286,6 +311,7 @@ func (b *Broker) setFleetMemory(content string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.fleetMemory = content
+	b.db.Exec("INSERT OR REPLACE INTO kv (key, value) VALUES ('fleet_memory', ?)", content)
 }
 
 func (b *Broker) getFleetMemory() string {
@@ -340,19 +366,7 @@ func runBroker(ctx context.Context) error {
 	}
 	defer b.db.Close()
 
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				b.cleanStalePeers()
-			}
-		}
-	})
+	// Stale cleanup + WAL checkpoint handled by goroutine in newBroker()
 
 	mux := http.NewServeMux()
 
@@ -488,6 +502,5 @@ func runBroker(ctx context.Context) error {
 		return err
 	}
 
-	wg.Wait()
 	return nil
 }
