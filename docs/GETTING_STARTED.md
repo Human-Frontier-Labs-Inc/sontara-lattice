@@ -132,7 +132,7 @@ On the broker machine, create systemd user services:
 
 ```bash
 # Broker
-cat > ~/.config/systemd/user/sontara-broker.service << 'EOF'
+cat > ~/.config/systemd/user/claude-peers-broker.service << 'EOF'
 [Unit]
 Description=Sontara Lattice Broker
 After=network-online.target
@@ -147,7 +147,7 @@ WantedBy=default.target
 EOF
 
 # Fleet memory daemon
-cat > ~/.config/systemd/user/sontara-dream.service << 'EOF'
+cat > ~/.config/systemd/user/claude-peers-dream.service << 'EOF'
 [Unit]
 Description=Sontara Lattice Fleet Memory
 After=network-online.target
@@ -163,7 +163,7 @@ WantedBy=default.target
 EOF
 
 # Daemon supervisor
-cat > ~/.config/systemd/user/sontara-supervisor.service << 'EOF'
+cat > ~/.config/systemd/user/claude-peers-supervisor.service << 'EOF'
 [Unit]
 Description=Sontara Lattice Daemon Supervisor
 After=network-online.target
@@ -180,10 +180,10 @@ WantedBy=default.target
 EOF
 
 systemctl --user daemon-reload
-systemctl --user enable --now sontara-broker sontara-dream sontara-supervisor
+systemctl --user enable --now claude-peers-broker claude-peers-dream claude-peers-supervisor
 
 # Security watch (correlates EDR events, escalates, emails alerts)
-cat > ~/.config/systemd/user/sontara-security-watch.service << 'EOF'
+cat > ~/.config/systemd/user/claude-peers-security-watch.service << 'EOF'
 [Unit]
 Description=Sontara Lattice Security Watch
 After=network-online.target
@@ -198,7 +198,7 @@ Environment=CLAUDE_PEERS_TOKEN=<fleet-write-jwt>
 WantedBy=default.target
 EOF
 
-systemctl --user enable --now sontara-security-watch
+systemctl --user enable --now claude-peers-security-watch
 ```
 
 ## Step 8: Set up Wazuh EDR (optional but recommended)
@@ -225,7 +225,7 @@ yay -S wazuh-agent
 
 Start the NATS bridge:
 ```bash
-cat > ~/.config/systemd/user/sontara-wazuh-bridge.service << 'EOF'
+cat > ~/.config/systemd/user/claude-peers-wazuh-bridge.service << 'EOF'
 [Unit]
 Description=Sontara Lattice Wazuh Bridge
 After=network-online.target docker.service
@@ -241,7 +241,7 @@ Environment=CLAUDE_PEERS_TOKEN=<fleet-write-jwt>
 WantedBy=default.target
 EOF
 
-systemctl --user enable --now sontara-wazuh-bridge
+systemctl --user enable --now claude-peers-wazuh-bridge
 ```
 
 ## Step 9: Set up Gridwatch dashboard (optional)
@@ -346,6 +346,6 @@ open http://<gridwatch-ip>:8888
 
 **403 QUARANTINED**: Machine's health score triggered quarantine from Wazuh alerts. Investigate the security event, then: `claude-peers unquarantine <machine>`
 
-**Daemon not running**: Check triage script (`triage.sh` must exit 0 for the daemon to run). Check supervisor logs: `journalctl --user -u sontara-supervisor`
+**Daemon not running**: Check triage script (`triage.sh` must exit 0 for the daemon to run). Check supervisor logs: `journalctl --user -u claude-peers-supervisor`
 
 **No peer summaries**: The MCP server needs `llm_base_url` and `llm_api_key` in config.json to generate auto-summaries via LLM.

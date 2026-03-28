@@ -126,8 +126,8 @@ This is what makes Claude Code sessions aware of each other. Everything else in 
 On your always-on server:
 
 ```bash
-sontara-lattice init broker
-sontara-lattice broker
+claude-peers init broker
+claude-peers broker
 ```
 
 This generates an Ed25519 root keypair and a self-signed UCAN root token.
@@ -137,7 +137,7 @@ This generates an Ed25519 root keypair and a self-signed UCAN root token.
 On each machine:
 
 ```bash
-sontara-lattice init client http://<broker-ip>:7899
+claude-peers init client http://<broker-ip>:7899
 ```
 
 Copy `root.pub` from the broker to `~/.config/claude-peers/root.pub` on the client.
@@ -148,59 +148,60 @@ On the broker machine:
 
 ```bash
 # Issue a peer-session token for a client
-sontara-lattice issue-token /path/to/client-identity.pub peer-session
+claude-peers issue-token /path/to/client-identity.pub peer-session
 
 # Issue a fleet-write token for dream/supervisor
-sontara-lattice issue-token /path/to/service-identity.pub fleet-write
+claude-peers issue-token /path/to/service-identity.pub fleet-write
 ```
 
 On the client, save the issued token:
 
 ```bash
-sontara-lattice save-token <jwt>
+claude-peers save-token <jwt>
 ```
 
 ### 4. Start services
 
 ```bash
 # Broker (handles peer registration, auth, fleet state)
-sontara-lattice broker
+claude-peers broker
 
 # MCP server (Claude Code integration, auto-started by Claude)
-sontara-lattice server
+claude-peers server
 
 # Daemon supervisor (manages autonomous agent workflows)
-sontara-lattice supervisor
+claude-peers supervisor
 
 # Fleet memory (consolidates activity into Claude memory)
-sontara-lattice dream-watch
+claude-peers dream-watch
 
 # Gridwatch dashboard (real-time fleet observability)
-sontara-lattice gridwatch
+claude-peers gridwatch
 
 # Wazuh bridge (security event ingestion from Wazuh EDR)
-sontara-lattice wazuh-bridge
+claude-peers wazuh-bridge
 ```
 
 ## CLI Reference
 
 ```
-sontara-lattice init <role> [url]              Generate config (broker or client)
-sontara-lattice config                         Show current config
-sontara-lattice broker                         Start the trust broker
-sontara-lattice server                         Start MCP stdio server (Claude Code)
-sontara-lattice status                         Show broker status and peers
-sontara-lattice peers                          List all peers
-sontara-lattice send <id> <msg>                Send a message to a peer
-sontara-lattice issue-token <pub> <role>       Issue a UCAN capability token
-sontara-lattice save-token <jwt>               Save a UCAN token locally
-sontara-lattice unquarantine <machine>         Restore a quarantined machine
-sontara-lattice dream                          One-shot fleet memory snapshot
-sontara-lattice dream-watch                    Continuous fleet memory via NATS
-sontara-lattice supervisor                     Run daemon supervisor
-sontara-lattice gridwatch                      Start fleet dashboard
-sontara-lattice wazuh-bridge                   Bridge Wazuh alerts to NATS
-sontara-lattice security-watch                 Correlate security events, escalate, alert
+claude-peers init <role> [url]              Generate config (broker or client)
+claude-peers config                         Show current config
+claude-peers broker                         Start the trust broker
+claude-peers server                         Start MCP stdio server (Claude Code)
+claude-peers status                         Show broker status and peers
+claude-peers peers                          List all peers
+claude-peers send <id> <msg>                Send a message to a peer
+claude-peers issue-token <pub> <role>       Issue a UCAN capability token
+claude-peers save-token <jwt>               Save a UCAN token locally
+claude-peers unquarantine <machine>         Restore a quarantined machine
+claude-peers dream                          One-shot fleet memory snapshot
+claude-peers dream-watch                    Continuous fleet memory via NATS
+claude-peers supervisor                     Run daemon supervisor
+claude-peers gridwatch                      Start fleet dashboard
+claude-peers wazuh-bridge                   Bridge Wazuh alerts to NATS
+claude-peers security-watch                 Correlate security events, escalate, alert
+claude-peers kill-broker                    Stop the broker daemon
 ```
 
 ## Configuration
@@ -277,18 +278,18 @@ All endpoints (except `/health`) require a UCAN Bearer token with the appropriat
 Each component runs as a systemd user service:
 
 ```bash
-# ~/.config/systemd/user/sontara-broker.service
+# ~/.config/systemd/user/claude-peers-broker.service
 [Service]
-ExecStart=%h/.local/bin/sontara-lattice broker
+ExecStart=%h/.local/bin/claude-peers broker
 
-# ~/.config/systemd/user/sontara-supervisor.service
+# ~/.config/systemd/user/claude-peers-supervisor.service
 [Service]
-ExecStart=%h/.local/bin/sontara-lattice supervisor
+ExecStart=%h/.local/bin/claude-peers supervisor
 Environment=CLAUDE_PEERS_TOKEN=<jwt>
 
-# ~/.config/systemd/user/sontara-wazuh-bridge.service
+# ~/.config/systemd/user/claude-peers-wazuh-bridge.service
 [Service]
-ExecStart=%h/.local/bin/sontara-lattice wazuh-bridge
+ExecStart=%h/.local/bin/claude-peers wazuh-bridge
 Environment=WAZUH_ALERTS_PATH=/path/to/alerts.json
 ```
 
