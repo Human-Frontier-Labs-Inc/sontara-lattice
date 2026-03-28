@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -18,6 +19,7 @@ import (
 func main() {
 	log.SetFlags(0)
 	initConfig()
+	authToken = loadAuthToken()
 
 	if len(os.Args) < 2 {
 		printUsage()
@@ -60,6 +62,20 @@ func main() {
 		if err := runGridwatch(ctx); err != nil {
 			log.Fatal(err)
 		}
+	case "issue-token":
+		cliIssueToken(os.Args[2:])
+	case "save-token":
+		cliSaveToken(os.Args[2:])
+	case "wazuh-bridge":
+		if err := runWazuhBridge(ctx); err != nil {
+			log.Fatal(err)
+		}
+	case "unquarantine":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Usage: claude-peers unquarantine <machine>")
+			os.Exit(1)
+		}
+		cliUnquarantine(os.Args[2])
 	case "kill-broker":
 		cliKillBroker()
 	default:
@@ -72,18 +88,24 @@ func printUsage() {
 	fmt.Println(`claude-peers - peer discovery and messaging for Claude Code
 
 Usage:
-  claude-peers init <role> [url]   Generate config (broker or client)
-  claude-peers config              Show current config
-  claude-peers broker              Start the broker daemon
-  claude-peers server              Start MCP stdio server (used by Claude Code)
-  claude-peers status              Show broker status and all peers
-  claude-peers peers               List all peers
-  claude-peers send <id> <msg>     Send a message to a peer
-  claude-peers dream               Snapshot fleet state to Claude memory
-  claude-peers dream-watch         Watch fleet via NATS and keep memory fresh
-  claude-peers supervisor          Run daemon supervisor (manages agent workflows)
-  claude-peers gridwatch           Start fleet health dashboard (reads gridwatch.json)
-  claude-peers kill-broker         Stop the broker daemon
+  claude-peers init <role> [url]                Generate config (broker or client)
+  claude-peers config                           Show current config
+  claude-peers broker                           Start the broker daemon
+  claude-peers server                           Start MCP stdio server (used by Claude Code)
+  claude-peers status                           Show broker status and all peers
+  claude-peers peers                            List all peers
+  claude-peers send <id> <msg>                  Send a message to a peer
+  claude-peers issue-token <pub-path> <role>    Issue a UCAN token for a machine
+  claude-peers save-token <jwt>                 Save a UCAN token locally
+  claude-peers dream                            Snapshot fleet state to Claude memory
+  claude-peers dream-watch                      Watch fleet via NATS and keep memory fresh
+  claude-peers supervisor                       Run daemon supervisor (manages agent workflows)
+  claude-peers gridwatch                        Start fleet health dashboard (reads gridwatch.json)
+  claude-peers wazuh-bridge                     Tail Wazuh alerts and publish to NATS
+  claude-peers unquarantine <machine>           Remove quarantine from a machine
+  claude-peers kill-broker                      Stop the broker daemon
+
+Token roles: peer-session, fleet-read, fleet-write, cli
 
 Setup:
   # On the broker machine (e.g. your always-on server):
@@ -91,7 +113,11 @@ Setup:
   claude-peers broker
 
   # On each client machine:
-  claude-peers init client http://<broker-ip>:7899`)
+  claude-peers init client http://<broker-ip>:7899
+  # Copy root.pub from broker, then on broker:
+  claude-peers issue-token /path/to/client-identity.pub peer-session
+  # On client, save the issued token:
+  claude-peers save-token <jwt>`)
 }
 
 func cliFetch(path string, body any, result any) error {
@@ -105,8 +131,8 @@ func cliFetch(path string, body any, result any) error {
 	} else {
 		req, _ = http.NewRequest("GET", cfg.BrokerURL+path, nil)
 	}
-	if cfg.Secret != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.Secret)
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -194,6 +220,111 @@ func cliSend(toID, msg string) {
 		fmt.Fprintf(os.Stderr, "Failed: %s\n", resp.Error)
 		os.Exit(1)
 	}
+}
+
+func cliIssueToken(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: claude-peers issue-token <machine-pub-path> <role>")
+		fmt.Fprintln(os.Stderr, "Roles: peer-session, fleet-read, fleet-write, cli")
+		os.Exit(1)
+	}
+
+	pubPath := args[0]
+	role := args[1]
+
+	var caps []Capability
+	switch role {
+	case "peer-session":
+		caps = PeerSessionCapabilities()
+	case "fleet-read":
+		caps = FleetReadCapabilities()
+	case "fleet-write":
+		caps = FleetWriteCapabilities()
+	case "cli":
+		caps = CLICapabilities()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown role: %s (use peer-session, fleet-read, fleet-write, or cli)\n", role)
+		os.Exit(1)
+	}
+
+	kp, err := LoadKeyPair(configDir())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading broker keypair: %v\n", err)
+		os.Exit(1)
+	}
+
+	parentToken, err := LoadToken(configDir())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading broker token: %v\n", err)
+		os.Exit(1)
+	}
+
+	targetPub, err := LoadPublicKey(pubPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading target public key: %v\n", err)
+		os.Exit(1)
+	}
+
+	token, err := MintToken(kp.PrivateKey, targetPub, caps, 24*time.Hour, parentToken)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error minting token: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(token)
+}
+
+func cliSaveToken(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: claude-peers save-token <jwt-string>")
+		os.Exit(1)
+	}
+
+	token := args[0]
+	if err := SaveToken(token, configDir()); err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving token: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Validate the token if root.pub is available.
+	rootPubPath := filepath.Join(configDir(), rootPubKeyFile)
+	rootPub, err := LoadPublicKey(rootPubPath)
+	if err != nil {
+		fmt.Printf("Token saved to %s\n", filepath.Join(configDir(), tokenFile))
+		fmt.Println("WARNING: could not load root.pub for validation")
+		return
+	}
+
+	v := NewTokenValidator(rootPub)
+	// Register root token as known parent if available (for delegated tokens).
+	if rootToken, err := LoadToken(configDir()); err == nil && rootToken != token {
+		v.RegisterToken(rootToken, AllCapabilities())
+	}
+
+	claims, err := v.Validate(token)
+	if err != nil {
+		fmt.Printf("Token saved to %s\n", filepath.Join(configDir(), tokenFile))
+		fmt.Printf("WARNING: token validation failed: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Token saved to %s\n", filepath.Join(configDir(), tokenFile))
+	fmt.Printf("Capabilities:\n")
+	for _, c := range claims.Capabilities {
+		fmt.Printf("  %s\n", c.Resource)
+	}
+	if claims.ExpiresAt != nil {
+		fmt.Printf("Expires: %s\n", claims.ExpiresAt.Time.Format(time.RFC3339))
+	}
+}
+
+func cliUnquarantine(machine string) {
+	var resp map[string]bool
+	if err := cliFetch("/unquarantine", map[string]string{"machine": machine}, &resp); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Machine %s unquarantined\n", machine)
 }
 
 func cliKillBroker() {

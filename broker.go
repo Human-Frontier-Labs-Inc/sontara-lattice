@@ -24,10 +24,13 @@ func generatePeerID() string {
 }
 
 type Broker struct {
-	db          *sql.DB
-	nats        *NATSPublisher
-	fleetMemory string
-	mu          sync.RWMutex
+	db            *sql.DB
+	nats          *NATSPublisher
+	fleetMemory   string
+	mu            sync.RWMutex
+	validator     *TokenValidator
+	healthMu      sync.RWMutex
+	machineHealth map[string]*MachineHealth
 }
 
 func newBroker() (*Broker, error) {
@@ -81,7 +84,21 @@ func newBroker() (*Broker, error) {
 		db.Exec(stmt) // Ignore errors from ALTER (column already exists).
 	}
 
-	b := &Broker{db: db, nats: newNATSPublisher()}
+	b := &Broker{db: db, nats: newNATSPublisher(), machineHealth: make(map[string]*MachineHealth)}
+
+	// Load UCAN keypair and create token validator.
+	kp, err := LoadKeyPair(configDir())
+	if err != nil {
+		log.Printf("[broker] WARNING: no keypair found (%v) -- all requests will get 401", err)
+	} else {
+		b.validator = NewTokenValidator(kp.PublicKey)
+		rootToken, err := LoadToken(configDir())
+		if err != nil {
+			log.Printf("[broker] WARNING: no root token found (%v) -- all requests will get 401", err)
+		} else {
+			b.validator.RegisterToken(rootToken, AllCapabilities())
+		}
+	}
 
 	// Restore fleet memory from SQLite if available
 	var mem sql.NullString
@@ -344,28 +361,6 @@ func writeJSON(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// authMiddleware rejects requests without a valid Bearer token.
-// If cfg.Secret is empty, auth is disabled (all requests pass).
-func authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cfg.Secret == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		// Health endpoint is always public (for monitoring)
-		if r.URL.Path == "/health" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		auth := r.Header.Get("Authorization")
-		if auth != "Bearer "+cfg.Secret {
-			http.Error(w, "unauthorized", 401)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func runBroker(ctx context.Context) error {
 	b, err := newBroker()
 	if err != nil {
@@ -375,22 +370,26 @@ func runBroker(ctx context.Context) error {
 
 	// Stale cleanup + WAL checkpoint handled by goroutine in newBroker()
 
+	// Start security event monitoring and health score decay.
+	go b.subscribeSecurityEvents(ctx)
+	go b.startHealthDecay(ctx)
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, HealthResponse{Status: "ok", Peers: b.peerCount(), Machine: cfg.MachineName})
 	})
 
-	mux.HandleFunc("POST /register", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /register", requireCapability("peer/register", func(w http.ResponseWriter, r *http.Request) {
 		req, err := decodeBody[RegisterRequest](r)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
 		writeJSON(w, b.register(req))
-	})
+	}))
 
-	mux.HandleFunc("POST /heartbeat", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /heartbeat", requireCapability("peer/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		req, err := decodeBody[HeartbeatRequest](r)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
@@ -398,9 +397,9 @@ func runBroker(ctx context.Context) error {
 		}
 		b.heartbeat(req)
 		writeJSON(w, map[string]bool{"ok": true})
-	})
+	}))
 
-	mux.HandleFunc("POST /set-summary", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /set-summary", requireCapability("peer/set-summary", func(w http.ResponseWriter, r *http.Request) {
 		req, err := decodeBody[SetSummaryRequest](r)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
@@ -408,45 +407,45 @@ func runBroker(ctx context.Context) error {
 		}
 		b.setSummary(req)
 		writeJSON(w, map[string]bool{"ok": true})
-	})
+	}))
 
-	mux.HandleFunc("POST /list-peers", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /list-peers", requireCapability("peer/list", func(w http.ResponseWriter, r *http.Request) {
 		req, err := decodeBody[ListPeersRequest](r)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
 		writeJSON(w, b.listPeers(req))
-	})
+	}))
 
-	mux.HandleFunc("POST /send-message", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /send-message", requireCapability("msg/send", func(w http.ResponseWriter, r *http.Request) {
 		req, err := decodeBody[SendMessageRequest](r)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
 		writeJSON(w, b.sendMessage(req))
-	})
+	}))
 
-	mux.HandleFunc("POST /poll-messages", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /poll-messages", requireCapability("msg/poll", func(w http.ResponseWriter, r *http.Request) {
 		req, err := decodeBody[PollMessagesRequest](r)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
 		writeJSON(w, b.pollMessages(req))
-	})
+	}))
 
-	mux.HandleFunc("POST /peek-messages", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /peek-messages", requireCapability("msg/poll", func(w http.ResponseWriter, r *http.Request) {
 		req, err := decodeBody[PollMessagesRequest](r)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
 		writeJSON(w, b.peekMessages(req))
-	})
+	}))
 
-	mux.HandleFunc("POST /ack-message", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /ack-message", requireCapability("msg/ack", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			MessageID int `json:"message_id"`
 		}
@@ -456,9 +455,9 @@ func runBroker(ctx context.Context) error {
 		}
 		b.ackMessage(req.MessageID)
 		writeJSON(w, map[string]bool{"ok": true})
-	})
+	}))
 
-	mux.HandleFunc("POST /unregister", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /unregister", requireCapability("peer/unregister", func(w http.ResponseWriter, r *http.Request) {
 		req, err := decodeBody[UnregisterRequest](r)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
@@ -466,22 +465,22 @@ func runBroker(ctx context.Context) error {
 		}
 		b.unregister(req)
 		writeJSON(w, map[string]bool{"ok": true})
-	})
+	}))
 
-	mux.HandleFunc("GET /events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /events", requireCapability("events/read", func(w http.ResponseWriter, r *http.Request) {
 		limit := 50
 		if v := r.URL.Query().Get("limit"); v != "" {
 			fmt.Sscanf(v, "%d", &limit)
 		}
 		writeJSON(w, b.recentEvents(limit))
-	})
+	}))
 
-	mux.HandleFunc("GET /fleet-memory", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /fleet-memory", requireCapability("memory/read", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/markdown")
 		w.Write([]byte(b.getFleetMemory()))
-	})
+	}))
 
-	mux.HandleFunc("POST /fleet-memory", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /fleet-memory", requireCapability("memory/write", func(w http.ResponseWriter, r *http.Request) {
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
@@ -489,7 +488,25 @@ func runBroker(ctx context.Context) error {
 		}
 		b.setFleetMemory(string(data))
 		writeJSON(w, map[string]bool{"ok": true})
-	})
+	}))
+
+	mux.HandleFunc("GET /machine-health", requireCapability("events/read", func(w http.ResponseWriter, r *http.Request) {
+		b.healthMu.RLock()
+		defer b.healthMu.RUnlock()
+		writeJSON(w, b.machineHealth)
+	}))
+
+	mux.HandleFunc("POST /unquarantine", requireCapability("memory/write", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Machine string `json:"machine"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		b.unquarantine(req.Machine)
+		writeJSON(w, map[string]bool{"ok": true})
+	}))
 
 	addr := cfg.Listen
 	ln, err := net.Listen("tcp", addr)
@@ -497,7 +514,7 @@ func runBroker(ctx context.Context) error {
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	srv := &http.Server{Handler: authMiddleware(mux)}
+	srv := &http.Server{Handler: ucanMiddleware(b.validator, b)(mux)}
 
 	log.Printf("[claude-peers broker] listening on %s (db: %s, machine: %s)", addr, cfg.DBPath, cfg.MachineName)
 

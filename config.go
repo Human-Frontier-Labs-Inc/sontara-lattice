@@ -1,19 +1,12 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
-
-func generateSecret() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return "cp-" + hex.EncodeToString(b)
-}
 
 // Config holds all runtime configuration for claude-peers.
 // Loaded once at startup from file → env overrides → defaults.
@@ -65,13 +58,12 @@ type Config struct {
 	// LLMAPIKey is the API key for the LLM endpoint (used for summary generation).
 	LLMAPIKey string `json:"llm_api_key"`
 
-	// Secret is a shared secret for broker auth. If set, all broker
-	// requests must include Authorization: Bearer <secret>.
-	// Leave empty to disable auth (not recommended for production).
-	Secret string `json:"secret"`
-
 	// NatsToken is the auth token for NATS server connections.
 	NatsToken string `json:"nats_token"`
+
+	// WazuhAlertsPath is the path to Wazuh's alerts.json log file.
+	// Used by the wazuh-bridge subcommand.
+	WazuhAlertsPath string `json:"wazuh_alerts_path"`
 }
 
 // cfg is the global config, loaded once at startup.
@@ -117,14 +109,14 @@ func loadConfig() Config {
 	if v := os.Getenv("CLAUDE_PEERS_LLM_MODEL"); v != "" {
 		c.LLMModel = v
 	}
-	if v := os.Getenv("CLAUDE_PEERS_SECRET"); v != "" {
-		c.Secret = v
-	}
 	if v := os.Getenv("CLAUDE_PEERS_NATS_TOKEN"); v != "" {
 		c.NatsToken = v
 	}
 	if v := os.Getenv("CLAUDE_PEERS_LLM_API_KEY"); v != "" {
 		c.LLMAPIKey = v
+	}
+	if v := os.Getenv("WAZUH_ALERTS_PATH"); v != "" {
+		c.WazuhAlertsPath = v
 	}
 
 	// Legacy env var
@@ -189,36 +181,67 @@ func writeConfig(c Config) error {
 func cliInit(args []string) {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, `Usage:
-  claude-peers init broker                          Set up as broker (generates secret)
-  claude-peers init client <broker-url> [secret]    Connect to a remote broker
+  claude-peers init broker                  Set up as broker (generates keypair + root token)
+  claude-peers init client <broker-url>     Connect to a remote broker
 
 Examples:
   claude-peers init broker
-  claude-peers init client http://your-server:7899 cp-abc123...`)
+  claude-peers init client http://your-server:7899`)
 		os.Exit(1)
 	}
 
 	c := defaultConfig()
+	dir := configDir()
+	os.MkdirAll(dir, 0755)
 
 	switch args[0] {
 	case "broker":
 		c.Role = "broker"
 		c.Listen = "0.0.0.0:7899"
 		c.BrokerURL = "http://127.0.0.1:7899"
-		c.Secret = generateSecret()
+
+		kp, err := GenerateKeyPair()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating keypair: %v\n", err)
+			os.Exit(1)
+		}
+		if err := SaveKeyPair(kp, dir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving keypair: %v\n", err)
+			os.Exit(1)
+		}
+		if err := SavePublicKey(kp.PublicKey, filepath.Join(dir, rootPubKeyFile)); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving root public key: %v\n", err)
+			os.Exit(1)
+		}
+
+		token, err := MintRootToken(kp.PrivateKey, AllCapabilities(), 365*24*time.Hour)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error minting root token: %v\n", err)
+			os.Exit(1)
+		}
+		if err := SaveToken(token, dir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving token: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "client":
 		c.Role = "client"
-		// Client needs the same secret as the broker
-		if len(args) >= 3 {
-			c.Secret = args[2]
-		}
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "Error: client requires a broker URL")
 			fmt.Fprintln(os.Stderr, "  claude-peers init client http://<broker-ip>:7899")
 			os.Exit(1)
 		}
 		c.BrokerURL = args[1]
+
+		kp, err := GenerateKeyPair()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating keypair: %v\n", err)
+			os.Exit(1)
+		}
+		if err := SaveKeyPair(kp, dir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving keypair: %v\n", err)
+			os.Exit(1)
+		}
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown role: %s (use 'broker' or 'client')\n", args[0])
@@ -234,10 +257,11 @@ Examples:
 	fmt.Printf("  role:         %s\n", c.Role)
 	fmt.Printf("  machine_name: %s\n", c.MachineName)
 	fmt.Printf("  broker_url:   %s\n", c.BrokerURL)
-	if c.Secret != "" {
-		fmt.Printf("  secret:       %s\n", c.Secret)
-	}
+	fmt.Printf("  identity:     %s\n", filepath.Join(dir, privateKeyFile))
+	fmt.Printf("  public key:   %s\n", filepath.Join(dir, publicKeyFile))
 	if c.Role == "broker" {
+		fmt.Printf("  root.pub:     %s\n", filepath.Join(dir, rootPubKeyFile))
+		fmt.Printf("  token:        %s\n", filepath.Join(dir, tokenFile))
 		fmt.Printf("  listen:       %s\n", c.Listen)
 		fmt.Printf("  db_path:      %s\n", c.DBPath)
 	}
@@ -246,7 +270,9 @@ Examples:
 	if c.Role == "broker" {
 		fmt.Println("Start the broker with: claude-peers broker")
 	} else {
-		fmt.Println("The MCP server will connect to the broker automatically.")
-		fmt.Println("Make sure the broker is running on the remote machine.")
+		fmt.Println("Next steps:")
+		fmt.Println("  1. Copy root.pub from broker machine to " + filepath.Join(dir, rootPubKeyFile))
+		fmt.Println("  2. On the broker, run: claude-peers issue-token <this-machine.pub> peer-session")
+		fmt.Println("  3. Save the issued token: claude-peers save-token <jwt>")
 	}
 }

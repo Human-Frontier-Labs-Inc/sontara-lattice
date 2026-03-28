@@ -336,3 +336,17 @@
 .tile.offline .t-meta,
 .tile.offline .t-agents,
 .tile.offline .llm-section { opacity: 0.1; }
+
+/* Security badges */
+.t-sec { flex-shrink: 0; }
+.sec-badge { font-size: 7px; padding: 1px 4px; border-radius: 2px; font-weight: 700; letter-spacing: 0.5px; }
+.sec-badge.degraded { color: var(--warn); border: 1px solid rgba(164, 255, 236, 0.3); }
+.sec-badge.quarantined { color: var(--red); border: 1px solid rgba(255, 107, 107, 0.4); background: rgba(255, 107, 107, 0.12); }
+
+.tile.quarantined { border-color: var(--red) !important; animation: quarantine-pulse 1.5s ease-in-out infinite; }
+.tile.degraded { border-color: var(--warn) !important; }
+
+@keyframes quarantine-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(255, 107, 107, 0.2); }
+  50% { box-shadow: 0 0 16px rgba(255, 107, 107, 0.5); }
+}

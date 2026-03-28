@@ -119,7 +119,8 @@ function updateFtr(machines) {
 const LEVEL_COLORS = { error: 'var(--red)', warn: 'var(--warn)', info: 'var(--mint)' };
 const TYPE_LABELS = {
   svc: 'SVC', docker: 'DOCKER', sync: 'SYNC', daemon: 'DAEMON',
-  peer: 'PEER', disk: 'DISK', chezmoi: 'CHEZMOI', nats: 'NATS'
+  peer: 'PEER', disk: 'DISK', chezmoi: 'CHEZMOI', nats: 'NATS',
+  security: 'SEC', quarantine: 'QRTN'
 };
 
 let lastTickerHash = '';
@@ -197,7 +198,7 @@ async function poll(url) {
 
 async function pollAll() {
   // Parallel fetches.
-  const [stats, peers, llm, nats, willyv4, services, natsStats, ticker] = await Promise.allSettled([
+  const [stats, peers, llm, nats, willyv4, services, natsStats, ticker, security] = await Promise.allSettled([
     poll('/api/stats'),
     poll('/api/peers'),
     poll('/api/llm'),
@@ -206,6 +207,7 @@ async function pollAll() {
     poll('/api/services'),
     poll('/api/nats-stats'),
     poll('/api/ticker'),
+    poll('/api/security'),
   ]);
 
   // Page 1: Fleet.
@@ -220,6 +222,7 @@ async function pollAll() {
   if (willyv4.status === 'fulfilled' && willyv4.value && willyv4.value.battery) {
     updateWillyv4Tile(willyv4.value);
   }
+  if (security.status === 'fulfilled') updateSecurityBadges(security.value);
 
   // Page 5: Peers (needs both stats + peers data).
   if (stats.status === 'fulfilled' || peers.status === 'fulfilled') {

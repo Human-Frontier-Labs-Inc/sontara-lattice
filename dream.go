@@ -244,8 +244,8 @@ func pushFleetMemoryToBroker(content string) {
 		return
 	}
 	req.Header.Set("Content-Type", "text/markdown")
-	if cfg.Secret != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.Secret)
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 	client := http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)

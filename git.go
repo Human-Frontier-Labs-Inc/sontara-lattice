@@ -84,26 +84,52 @@ func autoProject(cwd, root string) string {
 	if root != "" {
 		return filepath.Base(root)
 	}
-	// Trim home dir prefix for readability.
 	home, _ := os.UserHomeDir()
+	// If CWD is exactly home (or home lookup failed), no meaningful project.
+	if cwd == home || home == "" {
+		return ""
+	}
+	// Trim home dir prefix for readability.
 	rel := cwd
-	if home != "" && strings.HasPrefix(cwd, home) {
+	if strings.HasPrefix(cwd, home+"/") {
 		rel = strings.TrimPrefix(cwd, home+"/")
 	}
-	// Use first two path segments max.
-	parts := strings.SplitN(rel, "/", 3)
-	if len(parts) > 2 {
-		return parts[0] + "/" + parts[1]
+	// Use the last meaningful directory name for short paths,
+	// or first two segments for deeper paths.
+	parts := strings.Split(strings.TrimPrefix(rel, "/"), "/")
+	parts = filterEmpty(parts)
+	if len(parts) == 0 {
+		return ""
 	}
-	return rel
+	if len(parts) <= 2 {
+		return strings.Join(parts, "/")
+	}
+	return parts[0] + "/" + parts[1]
 }
 
-// autoName generates a readable peer name from machine + project.
-func autoName(machine, project string) string {
-	if project == "" {
-		return machine
+func filterEmpty(ss []string) []string {
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if s != "" {
+			out = append(out, s)
+		}
 	}
-	return machine + "/" + project
+	return out
+}
+
+// autoName generates a readable peer name from machine + project + tty.
+// TTY suffix disambiguates multiple sessions in the same directory.
+func autoName(machine, project, tty string) string {
+	base := machine
+	if project != "" {
+		base = machine + "/" + project
+	}
+	if tty != "" {
+		// Extract just the number: "/dev/pts/9" -> "9"
+		parts := strings.Split(tty, "/")
+		base += ":" + parts[len(parts)-1]
+	}
+	return base
 }
 
 func generateSummary(cwd, root, branch string, files []string) string {

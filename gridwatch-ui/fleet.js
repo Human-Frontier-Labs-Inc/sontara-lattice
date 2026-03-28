@@ -34,6 +34,7 @@ function makeTile(id) {
       <span class="t-dot on" id="td-${id}"></span>
       <div class="t-logo" id="tl-${id}"></div>
       <span class="t-name">${DISPLAY_NAMES[id] || id}</span>
+      <span class="t-sec" id="tsec-${id}"></span>
       <span class="t-ip" id="tip-${id}"></span>
     </div>
     <div class="t-gauges">
@@ -245,4 +246,30 @@ function updateWillyv4Tile(d) {
       <div style="flex:1"><div class="llm-row"><span class="lbl">NET</span><span class="val">${network}</span></div><div class="llm-row"><span class="lbl">TS</span><span class="val">${tailscale}</span></div></div>
     </div>`;
   tile.style.borderColor = power === 'active' ? 'rgba(80, 248, 114, 0.2)' : '';
+}
+
+// --- Security badges per machine ---
+
+function updateSecurityBadges(healthMap) {
+  if (!healthMap) return;
+  for (const id of MACHINES) {
+    const el = document.getElementById(`tsec-${id}`);
+    if (!el) continue;
+    const h = healthMap[normalizeMachine(id)] || healthMap[id];
+    if (!h || h.status === 'healthy') {
+      el.innerHTML = '';
+      document.getElementById(`t-${id}`)?.classList.remove('quarantined', 'degraded');
+      continue;
+    }
+    const tile = document.getElementById(`t-${id}`);
+    if (h.status === 'quarantined') {
+      el.innerHTML = '<span class="sec-badge quarantined">QRTN</span>';
+      tile?.classList.add('quarantined');
+      tile?.classList.remove('degraded');
+    } else if (h.status === 'degraded') {
+      el.innerHTML = `<span class="sec-badge degraded">SEC ${h.score}</span>`;
+      tile?.classList.add('degraded');
+      tile?.classList.remove('quarantined');
+    }
+  }
 }

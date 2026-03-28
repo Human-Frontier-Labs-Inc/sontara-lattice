@@ -95,6 +95,9 @@ type Gridwatch struct {
 	natsMonMu    sync.RWMutex
 	natsMonCache json.RawMessage
 
+	secMu    sync.RWMutex
+	secCache json.RawMessage
+
 	ticker *TickerBus
 
 	// Previous state for ticker change detection.
@@ -177,6 +180,7 @@ func runGridwatch(ctx context.Context) error {
 
 	go gw.collectStatsLoop(ctx)
 	go gw.collectPeersLoop(ctx)
+	go gw.collectSecurityLoop(ctx)
 	go gw.runServiceMonitor(ctx)
 	if gwc.LLMURL != "" {
 		go gw.collectLLMLoop(ctx)
@@ -208,6 +212,7 @@ func runGridwatch(ctx context.Context) error {
 	mux.HandleFunc("/api/willyv4", gw.handleWillyv4)
 	mux.HandleFunc("/api/services", gw.handleServices)
 	mux.HandleFunc("/api/nats-stats", gw.handleNATSMonitor)
+	mux.HandleFunc("/api/security", gw.handleSecurity)
 	mux.HandleFunc("/api/ticker", gw.handleTicker)
 	mux.Handle("/", fileServer)
 
@@ -378,8 +383,8 @@ func (gw *Gridwatch) fetchPeers() {
 	body, _ := json.Marshal(map[string]string{"scope": "all", "cwd": "/"})
 	req, _ := http.NewRequest("POST", cfg.BrokerURL+"/list-peers", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	if cfg.Secret != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.Secret)
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 	if resp, err := client.Do(req); err == nil {
 		if data, err := io.ReadAll(resp.Body); err == nil && resp.StatusCode == 200 {
@@ -391,8 +396,8 @@ func (gw *Gridwatch) fetchPeers() {
 	}
 
 	req2, _ := http.NewRequest("GET", cfg.BrokerURL+"/events?limit=20", nil)
-	if cfg.Secret != "" {
-		req2.Header.Set("Authorization", "Bearer "+cfg.Secret)
+	if authToken != "" {
+		req2.Header.Set("Authorization", "Bearer "+authToken)
 	}
 	if resp, err := client.Do(req2); err == nil {
 		if data, err := io.ReadAll(resp.Body); err == nil && resp.StatusCode == 200 {
@@ -676,6 +681,46 @@ func (gw *Gridwatch) handleServices(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, data)
 }
 
+func (gw *Gridwatch) handleSecurity(w http.ResponseWriter, r *http.Request) {
+	gw.secMu.RLock()
+	data := gw.secCache
+	gw.secMu.RUnlock()
+	if data == nil {
+		data = []byte("{}")
+	}
+	jsonResponse(w, data)
+}
+
+func (gw *Gridwatch) collectSecurityLoop(ctx context.Context) {
+	for {
+		gw.fetchSecurity()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+func (gw *Gridwatch) fetchSecurity() {
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, _ := http.NewRequest("GET", cfg.BrokerURL+"/machine-health", nil)
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 200 {
+		data, _ := io.ReadAll(resp.Body)
+		gw.secMu.Lock()
+		gw.secCache = data
+		gw.secMu.Unlock()
+	}
+}
+
 // emitNATSTickerEvent pushes a ticker event for NATS fleet events.
 func (gw *Gridwatch) emitNATSTickerEvent(event map[string]any, typ string) {
 	peerID, _ := event["peer_id"].(string)
@@ -707,6 +752,17 @@ func (gw *Gridwatch) emitNATSTickerEvent(event map[string]any, typ string) {
 		gw.ticker.Push("peer", "info", machine+" joined", "")
 	case "peer_left":
 		gw.ticker.Push("peer", "warn", machine+" left", "")
+	default:
+		// Security events from wazuh-bridge
+		if strings.HasPrefix(typ, "security_") || strings.Contains(typ, "quarantine") {
+			severity, _ := event["severity"].(string)
+			desc, _ := event["description"].(string)
+			level := "warn"
+			if severity == "critical" || severity == "quarantine" {
+				level = "error"
+			}
+			gw.ticker.Push("security", level, machine+" "+desc, "")
+		}
 	}
 }
 

@@ -1,6 +1,2 @@
 [tools]
 allow = ["bash", "read", "write", "recall", "memorize"]
-
-[execution]
-max_runtime_seconds = 120
-max_tool_calls = 20

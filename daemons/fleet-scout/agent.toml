@@ -1,13 +1,13 @@
 [llm]
 provider = "openai-compat"
 model = "claude-haiku"
-max_tokens = 4096
+max_tokens = 16384
 base_url = "http://127.0.0.1:4000/v1"
 api_key_env = "LITELLM_API_KEY"
 
 [small_llm]
 provider = "openai-compat"
 model = "claude-haiku"
-max_tokens = 1024
+max_tokens = 4096
 base_url = "http://127.0.0.1:4000/v1"
 api_key_env = "LITELLM_API_KEY"

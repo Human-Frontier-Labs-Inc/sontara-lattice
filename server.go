@@ -20,6 +20,19 @@ const (
 	heartbeatInterval = 15 * time.Second
 )
 
+var authToken string
+
+func loadAuthToken() string {
+	if v := os.Getenv("CLAUDE_PEERS_TOKEN"); v != "" {
+		return v
+	}
+	t, err := LoadToken(configDir())
+	if err != nil {
+		return ""
+	}
+	return t
+}
+
 func brokerFetch(path string, body any, result any) error {
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -30,8 +43,8 @@ func brokerFetch(path string, body any, result any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if cfg.Secret != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.Secret)
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -105,12 +118,17 @@ func runServer(ctx context.Context) error {
 		return err
 	}
 
+	authToken = loadAuthToken()
+	if authToken == "" {
+		logMCP("WARNING: no auth token found -- broker requests will be unauthenticated")
+	}
+
 	cwd, _ := os.Getwd()
 	root := gitRoot(cwd)
 	tty := getTTY()
 	branch := gitBranch(cwd)
 	project := autoProject(cwd, root)
-	name := autoName(cfg.MachineName, project)
+	name := autoName(cfg.MachineName, project, tty)
 
 	logMCP("Name: %s", name)
 	logMCP("CWD: %s", cwd)
@@ -244,8 +262,8 @@ func runServer(ctx context.Context) error {
 func syncFleetMemory() {
 	client := http.Client{Timeout: 5 * time.Second}
 	req, _ := http.NewRequest("GET", cfg.BrokerURL+"/fleet-memory", nil)
-	if cfg.Secret != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.Secret)
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != 200 {
@@ -305,10 +323,19 @@ func handleToolCall(id any, params json.RawMessage, myID, cwd, root string, t *M
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Found %d peer(s) (scope: %s):\n\n", len(peers), args.Scope)
 		for _, p := range peers {
-			fmt.Fprintf(&sb, "ID: %s\n  Machine: %s\n  PID: %d\n  CWD: %s\n", p.ID, p.Machine, p.PID, p.CWD)
-			if p.GitRoot != "" {
-				fmt.Fprintf(&sb, "  Repo: %s\n", p.GitRoot)
+			displayName := p.Name
+			if displayName == "" {
+				displayName = p.Machine
 			}
+			fmt.Fprintf(&sb, "%s (id: %s)\n", displayName, p.ID)
+			if p.Project != "" {
+				fmt.Fprintf(&sb, "  Project: %s", p.Project)
+				if p.Branch != "" {
+					fmt.Fprintf(&sb, " [%s]", p.Branch)
+				}
+				fmt.Fprintln(&sb)
+			}
+			fmt.Fprintf(&sb, "  CWD: %s\n", p.CWD)
 			if p.TTY != "" {
 				fmt.Fprintf(&sb, "  TTY: %s\n", p.TTY)
 			}

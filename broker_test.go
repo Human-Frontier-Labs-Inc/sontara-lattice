@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func testBroker(t *testing.T) *Broker {
@@ -15,6 +16,17 @@ func testBroker(t *testing.T) *Broker {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Create a test validator with a fresh root key.
+	kp, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.validator = NewTokenValidator(kp.PublicKey)
+	rootToken, err := MintRootToken(kp.PrivateKey, AllCapabilities(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.validator.RegisterToken(rootToken, AllCapabilities())
 	t.Cleanup(func() { b.db.Close() })
 	return b
 }
