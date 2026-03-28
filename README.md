@@ -1,368 +1,292 @@
-# claude-peers
+# Sontara Lattice
 
-Cross-machine peer discovery, real-time messaging, fleet monitoring, and AI daemons for Claude Code. Single Go binary, runs on anything.
+Trust-first runtime for autonomous agent services. Single Go binary, runs on anything from a Pi Zero to a cloud VM.
 
-![Architecture](assets/architecture.png)
+## What this is
 
-## What this does
+A platform for running autonomous AI agents that coordinate over a private mesh with cryptographic trust, continuous security monitoring, and real-time observability. Every agent gets scoped capabilities, every action is auditable, compromised nodes get quarantined automatically.
 
-**Your Claude Code instances talk to each other.** Run 5 Claude sessions across 3 machines -- every instance sees every other instance, knows what they're working on, and can send messages that arrive instantly in the recipient's session.
+Built on: **UCAN capability tokens** + **NATS JetStream** + **Wazuh EDR** + **Ed25519 identity**
 
-```
-  omarchy (pts/9)                    ubuntu-homelab (pts/1)
-  ┌───────────────────────┐          ┌──────────────────────┐
-  │ Claude A              │          │ Claude B             │
-  │ "send a message to    │  ──────> │                      │
-  │  peer xyz: what are   │ Tailscale│ ← message arrives   │
-  │  you working on?"     │  <────── │   instantly          │
-  └───────────────────────┘          └──────────────────────┘
-```
-
-On top of that, **AI daemons run autonomously** -- background agents that monitor your fleet, keep PRs mergeable, watch your LLM server, and maintain shared memory across all machines. Powered by [vinayprograms/agent](https://github.com/vinayprograms/agent) and NATS JetStream.
-
-**Gridwatch** is a real-time fleet health dashboard served locally, showing machine stats, services, NATS state, and daemon activity across all your machines.
-
-## Quick start
-
-### 1. Install
-
-```bash
-git clone https://github.com/WillyV3/claude-peers-go
-cd claude-peers-go
-go build -o claude-peers .
-```
-
-### 2. Register the MCP server
-
-```bash
-claude mcp add -s user claude-peers -- claude-peers server
-```
-
-### 3. Enable real-time channel messaging
-
-```bash
-# Add to ~/.bashrc or ~/.zshrc
-alias claude='claude --dangerously-load-development-channels server:claude-peers'
-```
-
-Claude Code must launch with this flag for messages to arrive live in sessions. You'll see a warning on startup -- that's expected. A shell alias survives Claude's auto-updater; wrapper scripts at `~/.local/bin/claude` get overwritten.
-
-### 4. Try it
-
-Open two Claude sessions. In the first:
-
-> List all peers
-
-Claude discovers the other session. Then:
-
-> Send a message to peer [id]: "what are you working on?"
-
-The other Claude receives it immediately.
-
-## Cross-machine setup
-
-```bash
-# On the always-on broker machine:
-claude-peers init broker
-claude-peers broker
-
-# On every other machine:
-claude-peers init client http://<broker-tailscale-ip>:7899
-```
-
-The broker tracks all peers and routes messages. Clients auto-register when Claude starts.
-
-## CLI
+## Architecture
 
 ```
-claude-peers init <role> [url]   Generate config (broker or client)
-claude-peers config              Show current config
-claude-peers broker              Start the broker daemon
-claude-peers server              Start MCP stdio server (used by Claude Code)
-claude-peers status              Show broker status and all peers
-claude-peers peers               List all peers
-claude-peers send <id> <msg>     Send a message to a peer from CLI
-claude-peers dream               Snapshot fleet state to Claude memory
-claude-peers dream-watch         Watch fleet via NATS, keep memory continuously fresh
-claude-peers supervisor          Run daemon supervisor (manages agent workflows)
-claude-peers gridwatch           Start fleet health dashboard (port 8888)
-claude-peers kill-broker         Stop the broker daemon
+Agent A (fleet-scout)      Agent B (pr-helper)       Agent C (your-service)
+  UCAN: [health/read]       UCAN: [repo/write]        UCAN: [custom/scope]
+  Policy: read-only          Policy: no force-push     Policy: rate-limited
+       |                          |                          |
+       +----------- NATS JetStream (event bus) -------------+
+                                  |
+                           Trust Broker
+                      (UCAN validation + health scoring)
+                                  |
+                    +-------------+-------------+
+                    |                           |
+             Wazuh EDR Bridge             Gridwatch Dashboard
+          (continuous endpoint            (real-time fleet
+           monitoring + alerts)            observability)
 ```
 
-## How it works
+Each agent gets:
+- **Identity**: Ed25519 keypair (hardware-backed where available)
+- **Capabilities**: UCAN token scoped to exactly what it needs, delegated from a root of trust
+- **Policy**: Guardrails on what tools/paths/actions are permitted
+- **Coordination**: NATS pub/sub for event-driven communication
+- **Monitoring**: Wazuh file integrity, auth logs, process monitoring
+- **Trust**: Dynamic -- health score degrades on security events, capabilities get restricted or revoked
 
-### Peer messaging
+## Core Components
 
-Each Claude Code session spawns an MCP server that registers with the broker. The server polls for inbound messages every second and pushes them as `notifications/claude/channel` -- Claude's experimental protocol for injecting content directly into a session.
+### Trust Broker
+HTTP API server that manages peer registration, messaging, fleet state, and UCAN token validation. Every request requires a capability-scoped JWT. The broker maintains per-machine health scores and enforces trust demotion.
 
-When Claude A sends a message to Claude B:
-1. A's MCP server POSTs to `/send-message`
-2. B's poll loop picks it up via `/poll-messages`
-3. B's MCP server writes a channel notification to stdout
-4. Claude B sees it appear and responds
+### UCAN Capability Auth
+Ed25519+JWT tokens with embedded capabilities and delegation chains. A root key signs tokens for each machine/service, scoped to exactly the endpoints they need. Child tokens can only have a subset of their parent's capabilities (attenuation). Tokens expire, are cryptographically verifiable without server round-trips, and chain back to a single root of trust.
 
-### MCP tools
+**Capability resources:**
+| Resource | What it gates |
+|----------|--------------|
+| `peer/register` | Register as a peer |
+| `peer/heartbeat` | Keep-alive |
+| `peer/list` | Discover other peers |
+| `msg/send` | Send messages |
+| `msg/poll` | Receive messages |
+| `events/read` | Read fleet events |
+| `memory/read` | Read fleet memory |
+| `memory/write` | Write fleet memory |
 
-| Tool | Description |
+**Pre-defined roles:**
+| Role | Capabilities |
 |------|-------------|
-| `list_peers` | Discover Claude instances (scope: `all`, `machine`, `directory`, `repo`) |
-| `send_message` | Send a message to a peer by ID |
-| `set_summary` | Set what you're working on (visible to all peers) |
-| `check_messages` | Manual message check (fallback if channel flag isn't active) |
+| `peer-session` | Full peer interaction (register, message, list, events) |
+| `fleet-read` | Read-only fleet access (list, events, memory read) |
+| `fleet-write` | Fleet read + memory write |
+| `cli` | List peers, send messages, read events |
 
-### NATS event bus
+### Wazuh EDR Bridge
+Tails Wazuh's `alerts.json`, classifies security events by type (file integrity, auth, process, network), and publishes to NATS `fleet.security.*` subjects. The broker subscribes and updates machine health scores:
 
-The broker dual-writes all events to SQLite (persistence) and NATS JetStream (pub/sub). Everything that happens in the fleet becomes a NATS event:
+| Alert Level | Severity | Trust Impact |
+|-------------|----------|-------------|
+| 1-5 | Info | Log only |
+| 6-9 | Warning | Health score +1 |
+| 10-12 | Critical | Health score +10, capabilities demoted |
+| 13-15 | Quarantine | All capabilities revoked |
 
-```
-fleet.peer.joined    — Claude instance registered
-fleet.peer.left      — Claude instance left
-fleet.message        — Message sent between peers
-fleet.summary        — Peer updated work summary
-fleet.daemon.*       — Daemon run results
-fleet.gridwatch.*    — Gridwatch ticker events (service/machine changes)
-```
+Health scores decay over time. Quarantine requires manual recovery.
 
-Events are retained for 24h in JetStream. Any component can subscribe to `fleet.>` and react.
+Custom Wazuh rules detect:
+- Claude-peers binary tampering (level 13)
+- UCAN credential file modification (level 12)
+- SSH key changes (level 10)
+- Systemd unit file changes (level 9)
 
-### Fleet memory (dream)
+### Daemon Supervisor
+Manages autonomous agent workflows. Each daemon is defined by:
+- `.agent` file: The agent's prompt and goals (Agentfile DSL)
+- `daemon.json`: Schedule (interval, event-triggered, or cron)
+- `agent.toml`: LLM provider config
+- `policy.toml`: Tool allowlists, path restrictions, safety constraints
+- `triage.sh`: Optional gate script (exit 0 = run, exit 1 = skip)
 
-`dream-watch` subscribes to NATS and continuously consolidates fleet activity into a Claude memory file at `~/.claude/projects/*/memory/fleet-activity.md`. New Claude sessions on any machine read this and know what happened across the fleet.
-
-```bash
-claude-peers dream          # one-shot snapshot
-claude-peers dream-watch    # continuous via NATS subscription
-```
-
-## Gridwatch
-
-Fleet health dashboard served at `http://localhost:8888`. Run with `claude-peers gridwatch`.
-
-### 4 pages
-
-| Page | Content |
-|------|---------|
-| **Fleet** | Machine cards -- CPU, memory, disk, top processes, uptime. SSHes to each machine every 5s. |
-| **Services** | HTTP health checks, Docker containers (status, uptime, restart count), Cloudflare tunnels, Syncthing folder sync state, chezmoi diff status, failed systemd units. |
-| **NATS** | Live JetStream stream/consumer stats, connection list, message rates, recent fleet events, daemon run log. |
-| **Agents** | Daemon run history from NATS -- which daemons ran, duration, trigger, outcome. |
-
-### Ticker event bus
-
-A scrolling ticker at the bottom of every page shows real-time events:
-- Machine status changes (online/offline/timeout) -- debounced to prevent flapping
-- Disk alerts at ≥85%
-- Service and Docker status changes
-- Sync conflicts
-- Failed systemd units
-- Daemon completions and failures
-- Peer joins/leaves (from NATS)
-
-Ticker events are also published to `fleet.gridwatch.*` on NATS for fleet-wide visibility.
-
-### Configuration
-
-Gridwatch loads from `~/.config/claude-peers/gridwatch.json`:
-
-```json
-{
-  "port": 8888,
-  "machines": [
-    {"id": "homelab", "host": "ubuntu-homelab", "os": "linux", "specs": "32GB RAM", "ip": "100.109.211.128"},
-    {"id": "omarchy", "host": "", "os": "linux", "specs": "16GB RAM", "ip": "100.85.150.110"},
-    {"id": "macbook", "host": "macbook1", "os": "macos", "specs": "M1 Pro", "ip": ""}
-  ],
-  "llm_url": "http://100.75.170.108:8080",
-  "nats_url": "nats://100.109.211.128:4222",
-  "nats_monitor_url": "http://100.109.211.128:8222"
-}
-```
-
-Machines with `"host": ""` are monitored locally (no SSH). Set `"os": "macos"` for macOS machines.
-
-Override config path: `GRIDWATCH_CONFIG=/path/to/file` or `GRIDWATCH_PORT=9999`.
-
-### Service monitor configuration
-
-Service monitoring reads from `~/.config/claude-peers/service-monitor.json`:
-
-```json
-{
-  "interval": 30,
-  "http_checks": [
-    {"name": "litellm", "url": "http://100.109.211.128:4000/health", "port": 4000},
-    {"name": "broker", "url": "http://100.109.211.128:7899/health", "port": 7899}
-  ],
-  "docker_host": "ubuntu-homelab",
-  "syncthing_url": "http://127.0.0.1:8384",
-  "syncthing_key": "your-api-key",
-  "syncthing_host": "ubuntu-homelab",
-  "sync_folders": ["projects", "hfl-projects"],
-  "chezmoi_repo_on": "ubuntu-homelab",
-  "tunnels": [
-    {"name": "humanfrontiertests", "hostname": "humanfrontiertests.com", "backend": "localhost:3000"}
-  ]
-}
-```
-
-## Daemons
-
-![Daemon Filesystem Layout](assets/daemon-flow.png)
-
-![Daemon Trigger Flow](assets/daemon-triggers.png)
-
-Daemons are AI background processes that maintain your infrastructure without prompting. The supervisor watches for triggers (NATS events or time intervals), runs zero-cost triage checks, and spawns agent workflows using [vinayprograms/agent](https://github.com/vinayprograms/agent).
-
-Each daemon is a directory with 4 files:
-
-```
-daemons/fleet-scout/
-  daemon.json         # schedule + description
-  fleet-scout.agent   # workflow definition (Agentfile DSL)
-  agent.toml          # LLM provider config
-  policy.toml         # tool allowlist + execution limits
-```
-
-### Schedules
-
-| Format | Example | Behavior |
-|--------|---------|----------|
-| `interval:<duration>` | `interval:15m` | Run on a fixed interval |
-| `event:<nats-subject>` | `event:fleet.>` | Trigger on matching NATS event |
-| `cron:<expression>` | `cron:0 * * * *` | Run on cron schedule |
-
-### Included daemons
-
+**Built-in daemons:**
 | Daemon | Schedule | What it does |
 |--------|----------|-------------|
-| **fleet-scout** | Every 15m | Checks broker health, all peers, LLM server. Reports anomalies. |
-| **fleet-memory** | On `fleet.>` events | Consolidates fleet activity into shared Claude memory. |
-| **llm-watchdog** | Every 15m | Monitors LLM server health, alerts on anomalies. |
-| **pr-helper** | Every 30m | Keeps PRs mergeable -- fixes conflicts, lint, stale descriptions. |
-| **sync-janitor** | Every 30m | Detects Syncthing conflict files and emails a resolution report. |
-| **librarian** | Every 6h | Audits documentation against live fleet state, emails discrepancy report. |
+| fleet-scout | 15m | Check health of all machines and services |
+| fleet-memory | event:fleet.> | Consolidate fleet activity into shared memory |
+| pr-helper | 30m | Keep PRs mergeable across GitHub orgs |
+| llm-watchdog | 15m | Monitor LLM server health |
+| sync-janitor | 30m | Detect and report Syncthing conflicts |
+| librarian | 6h | Audit documentation against live fleet state |
 
-### Running the supervisor
+### Gridwatch Dashboard
+5-page real-time kiosk dashboard:
+1. **Fleet**: Machine tiles with CPU/RAM/disk, live Claude agents, LLM status
+2. **Services**: Docker, Syncthing, systemd, Cloudflare tunnel monitoring
+3. **NATS**: JetStream stats, connections, consumers, message flow
+4. **Agents**: Daemon status cards with run history, sparklines, output
+5. **Peers**: Constellation network graph of the agent mesh
+
+Embedded in the binary. Serves on any port. Auto-rotates pages.
+
+### Fleet Memory (Dream)
+Consolidates fleet activity into Claude-compatible memory files. Peers fetch fleet state on startup so every Claude session knows what's happening across the mesh. Updated via NATS events or periodic polling.
+
+### Peer Network
+MCP server for Claude Code integration. Each Claude session registers, discovers peers, sends/receives messages in real-time via JSON-RPC notifications. Auto-generates summaries of what each session is working on.
+
+## Quick Start
+
+### 1. Initialize the broker
+
+On your always-on server:
 
 ```bash
-claude-peers supervisor
+sontara-lattice init broker
+sontara-lattice broker
 ```
 
-The supervisor discovers all daemon directories, connects to NATS for event triggers, and manages the lifecycle. Each run is policy-constrained (tool allowlist, max runtime, max tool calls). Failed daemons cool off for 5 minutes before retrying.
+This generates an Ed25519 root keypair and a self-signed UCAN root token.
 
-Daemon workflows run through LiteLLM, routing to whatever model is configured in the daemon's `agent.toml`.
+### 2. Set up client machines
 
-### Agentfile format
+On each machine:
 
-Daemon workflows use the vinay-agent Agentfile DSL:
-
-```
-NAME daemon-name
-
-INPUT variable_name DEFAULT "default_value"
-
-AGENT role """System prompt..."""
-
-GOAL goal_name "Description of the goal"
-RUN step_name USING goal_name
+```bash
+sontara-lattice init client http://<broker-ip>:7899
 ```
 
-Or the compact form (no separate AGENT block):
+Copy `root.pub` from the broker to `~/.config/claude-peers/root.pub` on the client.
+
+### 3. Issue capability tokens
+
+On the broker machine:
+
+```bash
+# Issue a peer-session token for a client
+sontara-lattice issue-token /path/to/client-identity.pub peer-session
+
+# Issue a fleet-write token for dream/supervisor
+sontara-lattice issue-token /path/to/service-identity.pub fleet-write
+```
+
+On the client, save the issued token:
+
+```bash
+sontara-lattice save-token <jwt>
+```
+
+### 4. Start services
+
+```bash
+# Broker (handles peer registration, auth, fleet state)
+sontara-lattice broker
+
+# MCP server (Claude Code integration, auto-started by Claude)
+sontara-lattice server
+
+# Daemon supervisor (manages autonomous agent workflows)
+sontara-lattice supervisor
+
+# Fleet memory (consolidates activity into Claude memory)
+sontara-lattice dream-watch
+
+# Gridwatch dashboard (real-time fleet observability)
+sontara-lattice gridwatch
+
+# Wazuh bridge (security event ingestion from Wazuh EDR)
+sontara-lattice wazuh-bridge
+```
+
+## CLI Reference
 
 ```
-GOAL goal_name """Multi-line goal description.
-Steps to execute..."""
-
-RUN main USING goal_name
+sontara-lattice init <role> [url]              Generate config (broker or client)
+sontara-lattice config                         Show current config
+sontara-lattice broker                         Start the trust broker
+sontara-lattice server                         Start MCP stdio server (Claude Code)
+sontara-lattice status                         Show broker status and peers
+sontara-lattice peers                          List all peers
+sontara-lattice send <id> <msg>                Send a message to a peer
+sontara-lattice issue-token <pub> <role>       Issue a UCAN capability token
+sontara-lattice save-token <jwt>               Save a UCAN token locally
+sontara-lattice unquarantine <machine>         Restore a quarantined machine
+sontara-lattice dream                          One-shot fleet memory snapshot
+sontara-lattice dream-watch                    Continuous fleet memory via NATS
+sontara-lattice supervisor                     Run daemon supervisor
+sontara-lattice gridwatch                      Start fleet dashboard
+sontara-lattice wazuh-bridge                   Bridge Wazuh alerts to NATS
 ```
 
 ## Configuration
 
-`~/.config/claude-peers/config.json`:
+Config file: `~/.config/claude-peers/config.json`
 
 ```json
 {
   "role": "client",
-  "broker_url": "http://<broker-ip>:7899",
-  "machine_name": "my-machine",
-  "stale_timeout": 300,
-  "nats_url": "nats://<broker-ip>:4222",
-  "nats_token": "",
-  "daemon_dir": "/path/to/daemons",
-  "agent_bin": "/path/to/agent",
-  "llm_base_url": "http://<litellm-host>:4000/v1",
-  "llm_model": "vertex_ai/claude-sonnet-4-6",
-  "secret": ""
+  "broker_url": "http://100.109.211.128:7899",
+  "machine_name": "omarchy",
+  "nats_token": "nats-...",
+  "llm_base_url": "http://100.109.211.128:4000/v1",
+  "llm_api_key": "sk-..."
 }
 ```
 
-Environment variable overrides:
+Key files in `~/.config/claude-peers/`:
+| File | Purpose |
+|------|---------|
+| `config.json` | Runtime configuration |
+| `identity.pem` | Ed25519 private key (mode 0600) |
+| `identity.pub` | Ed25519 public key |
+| `root.pub` | Fleet root public key (from broker) |
+| `token.jwt` | UCAN capability token (mode 0600) |
 
-| Variable | Config key |
-|----------|------------|
-| `CLAUDE_PEERS_BROKER_URL` | `broker_url` |
-| `CLAUDE_PEERS_LISTEN` | `listen` |
-| `CLAUDE_PEERS_MACHINE` | `machine_name` |
-| `CLAUDE_PEERS_NATS` | `nats_url` |
-| `CLAUDE_PEERS_NATS_TOKEN` | `nats_token` |
-| `CLAUDE_PEERS_DAEMONS` | `daemon_dir` |
-| `AGENT_BIN` | `agent_bin` |
-| `CLAUDE_PEERS_LLM_URL` | `llm_base_url` |
-| `CLAUDE_PEERS_LLM_MODEL` | `llm_model` |
-| `CLAUDE_PEERS_SECRET` | `secret` |
+All config fields have environment variable overrides (`CLAUDE_PEERS_*`).
+
+## NATS Subjects
+
+| Subject | Publisher | Content |
+|---------|-----------|---------|
+| `fleet.peer.joined` | Broker | Peer registration |
+| `fleet.peer.left` | Broker | Peer departure |
+| `fleet.summary` | Broker | Summary changes |
+| `fleet.message` | Broker | Message sent |
+| `fleet.security.fim` | Wazuh bridge | File integrity alerts |
+| `fleet.security.auth` | Wazuh bridge | Authentication events |
+| `fleet.security.process` | Wazuh bridge | Process anomalies |
+| `fleet.security.network` | Wazuh bridge | Network anomalies |
+| `fleet.security.quarantine` | Wazuh bridge | Quarantine triggers |
 
 ## Broker API
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Status + peer count + machine name |
-| `/register` | POST | Register peer |
-| `/heartbeat` | POST | Keep-alive |
-| `/list-peers` | POST | List peers by scope (all/machine/directory/repo) |
-| `/send-message` | POST | Send message to a peer |
-| `/poll-messages` | POST | Get messages + mark delivered |
-| `/peek-messages` | POST | Get messages without marking delivered |
-| `/set-summary` | POST | Update peer work summary |
-| `/events` | GET | Recent broker events (1h retention) |
-| `/unregister` | POST | Remove peer |
+All endpoints (except `/health`) require a UCAN Bearer token with the appropriate capability.
 
-## Production deployment
-
-All services run as systemd user units on the broker machine:
-
-```bash
-systemctl --user enable --now claude-peers-broker
-systemctl --user enable --now nats-server
-systemctl --user enable --now claude-peers-dream
-systemctl --user enable --now claude-peers-supervisor
-loginctl enable-linger $USER    # start without login
-```
-
-Cross-compile and deploy to the whole fleet:
-
-```bash
-go build -o claude-peers .
-GOOS=linux GOARCH=amd64 go build -o claude-peers-linux-amd64 .
-GOOS=linux GOARCH=arm64 go build -o claude-peers-linux-arm64 .
-GOOS=darwin GOARCH=arm64 go build -o claude-peers-darwin-arm64 .
-
-cp deploy.conf.example deploy.conf   # first time only
-# edit deploy.conf with your fleet hosts
-./deploy.sh
-```
+| Method | Path | Capability | Description |
+|--------|------|-----------|-------------|
+| GET | `/health` | (public) | Broker status |
+| POST | `/register` | `peer/register` | Register a peer |
+| POST | `/heartbeat` | `peer/heartbeat` | Keep-alive |
+| POST | `/list-peers` | `peer/list` | Discover peers |
+| POST | `/send-message` | `msg/send` | Send a message |
+| POST | `/poll-messages` | `msg/poll` | Receive messages |
+| POST | `/set-summary` | `peer/set-summary` | Update work summary |
+| GET | `/events` | `events/read` | Recent events |
+| GET | `/fleet-memory` | `memory/read` | Fleet memory document |
+| POST | `/fleet-memory` | `memory/write` | Update fleet memory |
+| GET | `/machine-health` | `events/read` | Per-machine health scores |
+| POST | `/unquarantine` | `memory/write` | Restore quarantined machine |
 
 ## Dependencies
 
-- `modernc.org/sqlite` -- pure Go SQLite (no CGO)
-- `github.com/nats-io/nats.go` -- NATS client
-- Go stdlib for everything else
+- Go 1.25+
+- [NATS Server](https://nats.io/) with JetStream enabled
+- [Wazuh](https://wazuh.com/) manager (Docker) + agents on fleet machines
+- [vinayprograms/agent](https://github.com/vinayprograms/agent) binary (for daemon supervisor)
+- `golang-jwt/jwt/v5` (UCAN tokens)
+- `nats-io/nats.go` (NATS client)
+- `modernc.org/sqlite` (broker storage)
 
-Daemons use [vinayprograms/agent](https://github.com/vinayprograms/agent) as an external binary for workflow execution.
+## Production Deployment
 
-## Credits
+Each component runs as a systemd user service:
 
-Go rewrite of [claude-peers-mcp](https://github.com/louislva/claude-peers-mcp) by louislva. Extended with cross-machine networking, real-time channel messaging, NATS pub/sub, fleet memory, gridwatch dashboard, and AI daemons by Claude (Anthropic) and [Willy Van Sickle](https://github.com/WillyV3). Daemon execution powered by [vinayprograms/agent](https://github.com/vinayprograms/agent) and [agentkit](https://github.com/vinayprograms/agentkit).
+```bash
+# ~/.config/systemd/user/sontara-broker.service
+[Service]
+ExecStart=%h/.local/bin/sontara-lattice broker
+
+# ~/.config/systemd/user/sontara-supervisor.service
+[Service]
+ExecStart=%h/.local/bin/sontara-lattice supervisor
+Environment=CLAUDE_PEERS_TOKEN=<jwt>
+
+# ~/.config/systemd/user/sontara-wazuh-bridge.service
+[Service]
+ExecStart=%h/.local/bin/sontara-lattice wazuh-bridge
+Environment=WAZUH_ALERTS_PATH=/path/to/alerts.json
+```
 
 ## License
 
-MIT
+Private. Copyright Human Frontier Labs Inc.
