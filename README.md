@@ -85,7 +85,7 @@ Manages autonomous agent workflows. Each daemon is defined by:
 |--------|----------|-------------|
 | fleet-scout | 10m | Check health of all machines and services |
 | fleet-memory | 10m | Consolidate fleet activity into shared memory |
-| llm-watchdog | 10m | Monitor LLM server health |
+| llm-watchdog | 10m | Monitor LLM server health, restart if down, alert on anomalies |
 | pr-helper | 15m | Keep PRs mergeable across GitHub orgs |
 | sync-janitor | 15m | Detect and report Syncthing conflicts |
 | librarian | 3h | Audit and update documentation across fleet machines |
