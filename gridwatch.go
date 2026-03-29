@@ -520,7 +520,7 @@ func (gw *Gridwatch) subscribeNATS(ctx context.Context) {
 	consumer, err := js.CreateOrUpdateConsumer(ctx, "FLEET", jetstream.ConsumerConfig{
 		Durable:       "gridwatch-go",
 		FilterSubject: "fleet.>",
-		DeliverPolicy: jetstream.DeliverLastPolicy,
+		DeliverPolicy: jetstream.DeliverLastPerSubjectPolicy,
 		AckPolicy:     jetstream.AckExplicitPolicy,
 	})
 	if err != nil {
