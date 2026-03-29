@@ -86,14 +86,14 @@ provider = "openai-compat"
 model = "claude-sonnet"
 max_tokens = 16384
 base_url = "http://your-llm-proxy:4000/v1"
-api_key_env = "LITELLM_API_KEY"
+api_key_env = "OPENAI_API_KEY"
 
 [small_llm]
 provider = "openai-compat"
 model = "claude-haiku"
 max_tokens = 4096
 base_url = "http://your-llm-proxy:4000/v1"
-api_key_env = "LITELLM_API_KEY"
+api_key_env = "OPENAI_API_KEY"
 ```
 
 The `small_llm` is used for summarization and triage decisions. The main `llm` handles the actual daemon work.
@@ -183,10 +183,12 @@ Current triage behaviors:
 |--------|----------|---------|
 | fleet-scout | 10m | Check health of all machines and services, report anomalies |
 | fleet-memory | 10m | Consolidate fleet activity into shared Claude memory |
-| llm-watchdog | 10m | Monitor LLM server health, alert if down |
+| llm-watchdog | 10m | Monitor LLM server health, restart if down, alert on anomalies |
 | pr-helper | 15m | Keep PRs mergeable across GitHub orgs (human-frontier-lab, williavs, WillyV3) |
 | sync-janitor | 15m | Detect Syncthing conflict files, email analysis report |
 | librarian | 3h | Audit and update documentation across fleet machines |
+
+> **Note on llm-watchdog**: `llm-watchdog` intentionally uses `claude-haiku` as its primary LLM (not `claude-sonnet`). It runs every 10 minutes and performs simple health checks — haiku is sufficient and avoids burning capacity on a high-frequency monitoring loop. All other daemons use `claude-sonnet` for their primary work.
 
 ## Monitoring daemons
 
