@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nats-io/nats.go"
 )
 
 // ResponseDaemon subscribes to fleet security events and executes
@@ -93,7 +95,7 @@ func runResponseDaemon(ctx context.Context) error {
 
 	nc, err := subscribeFleet("response-daemon", func(event FleetEvent) {
 		rd.processEvent(event)
-	})
+	}, nats.DeliverNew())
 	if err != nil {
 		return err
 	}

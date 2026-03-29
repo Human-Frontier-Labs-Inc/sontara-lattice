@@ -122,7 +122,8 @@ func (p *NATSPublisher) close() {
 
 // subscribeFleet subscribes to the FLEET JetStream with a named durable consumer.
 // Each caller should use a unique consumerName to avoid conflicts.
-func subscribeFleet(consumerName string, handler func(FleetEvent)) (*nats.Conn, error) {
+// Pass deliverNew=true to only receive events published after subscription (no replay).
+func subscribeFleet(consumerName string, handler func(FleetEvent), opts ...nats.SubOpt) (*nats.Conn, error) {
 	subOpts := []nats.Option{
 		nats.Name("claude-peers-" + consumerName),
 		nats.ReconnectWait(2 * time.Second),
@@ -143,13 +144,17 @@ func subscribeFleet(consumerName string, handler func(FleetEvent)) (*nats.Conn, 
 	}
 
 	// Durable consumer so we don't miss events between runs
+	subOpt := []nats.SubOpt{nats.Durable(consumerName), nats.DeliverAll()}
+	if len(opts) > 0 {
+		subOpt = append(subOpt[:1], opts...) // keep durable, replace delivery policy
+	}
 	_, err = js.Subscribe("fleet.>", func(msg *nats.Msg) {
 		var event FleetEvent
 		if json.Unmarshal(msg.Data, &event) == nil {
 			handler(event)
 		}
 		msg.Ack()
-	}, nats.Durable(consumerName), nats.DeliverAll())
+	}, subOpt...)
 
 	if err != nil {
 		nc.Close()
