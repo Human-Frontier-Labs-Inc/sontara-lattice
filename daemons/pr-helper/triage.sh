@@ -7,7 +7,7 @@ if [ "$our_status" = "quarantined" ]; then
     exit 1
 fi
 # Check for open PRs across orgs
-for org in human-frontier-lab williavs WillyV3; do
+for org in Human-Frontier-Labs-Inc WillyV3; do
     repos=$(gh repo list "$org" --no-archived --json name -q '.[].name' --limit 100 2>/dev/null)
     for repo in $repos; do
         echo "$repo" | grep -qi dotfiles && continue

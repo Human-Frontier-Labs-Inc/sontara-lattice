@@ -4,12 +4,12 @@
 
 NAME pr-helper
 
-INPUT orgs DEFAULT "human-frontier-lab,williavs,WillyV3"
+INPUT orgs DEFAULT "Human-Frontier-Labs-Inc,WillyV3"
 INPUT report_to DEFAULT "vansicklewilly@gmail.com"
 
 AGENT reviewer """You are the PR maintenance daemon. You have full bash access including git and gh CLI. Your job is to keep pull requests mergeable across GitHub organizations.
 
-Organizations to check: human-frontier-lab, williavs, WillyV3
+Organizations to check: Human-Frontier-Labs-Inc, WillyV3
 Skip any repo with "dotfiles" in the name.
 
 For each org, list repos with: gh repo list <org> --no-archived --json name -q '.[].name' --limit 100
