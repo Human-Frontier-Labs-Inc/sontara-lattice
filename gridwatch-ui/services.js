@@ -201,5 +201,21 @@ function updateServicesPage(data) {
   // Chezmoi at bottom, full width
   html += renderChezmoiSection(data.chezmoi);
 
+  // Lattice services -- Sontara Lattice systemd units
+  if (data.lattice_units && data.lattice_units.length > 0) {
+    html += '<div class="svc-section svc-lattice">';
+    html += '<div class="svc-section-hdr">LATTICE SERVICES</div>';
+    html += '<div class="svc-lattice-grid">';
+    for (const u of data.lattice_units) {
+      const ok = u.status === 'active';
+      html += `<div class="svc-lattice-unit ${ok ? 'ok' : 'down'}">`;
+      html += `<span class="svc-lattice-dot ${ok ? 'ok' : 'down'}"></span>`;
+      html += `<span class="svc-lattice-name">${esc(u.name)}</span>`;
+      html += `<span class="svc-lattice-status">${u.status}</span>`;
+      html += `</div>`;
+    }
+    html += '</div></div>';
+  }
+
   el.innerHTML = html;
 }

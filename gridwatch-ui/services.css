@@ -342,3 +342,29 @@
 .svc-bottom-row {
   flex-shrink: 0;
 }
+
+/* Lattice services */
+.svc-lattice { margin-top: 4px; }
+.svc-lattice-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.svc-lattice-unit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  padding: 2px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.svc-lattice-unit.down { border-color: rgba(255, 107, 107, 0.3); }
+.svc-lattice-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.svc-lattice-dot.ok { background: var(--green); }
+.svc-lattice-dot.down { background: var(--red); }
+.svc-lattice-name { color: var(--text); font-weight: 600; }
+.svc-lattice-status { color: var(--dim); font-size: 8px; }
+.svc-lattice-unit.ok .svc-lattice-status { color: var(--mint); }
+.svc-lattice-unit.down .svc-lattice-status { color: var(--red); }

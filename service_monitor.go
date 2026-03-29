@@ -45,13 +45,19 @@ type TunnelCheck struct {
 
 // ServiceStatus is the full snapshot published to NATS and served via API.
 type ServiceStatus struct {
-	Timestamp   string         `json:"timestamp"`
-	Services    []ServiceEntry `json:"services"`
-	Docker      []DockerEntry  `json:"docker"`
-	Tunnels     []TunnelEntry  `json:"tunnels"`
-	Sync        SyncStatus     `json:"sync"`
-	Chezmoi     ChezmoiStatus  `json:"chezmoi"`
-	FailedUnits []string       `json:"failed_units"`
+	Timestamp    string           `json:"timestamp"`
+	Services     []ServiceEntry   `json:"services"`
+	Docker       []DockerEntry    `json:"docker"`
+	Tunnels      []TunnelEntry    `json:"tunnels"`
+	Sync         SyncStatus       `json:"sync"`
+	Chezmoi      ChezmoiStatus    `json:"chezmoi"`
+	FailedUnits  []string         `json:"failed_units"`
+	LatticeUnits []LatticeUnit    `json:"lattice_units"`
+}
+
+type LatticeUnit struct {
+	Name   string `json:"name"`
+	Status string `json:"status"` // "active", "inactive", "failed"
 }
 
 type ServiceEntry struct {
@@ -226,6 +232,7 @@ func collectServices(smc ServiceMonitorConfig) ServiceStatus {
 	status.Sync = syncStatus
 	status.Chezmoi = chezmoi
 	status.FailedUnits = failedUnits
+	status.LatticeUnits = checkLatticeUnits(smc.DockerHost)
 	return status
 }
 
@@ -623,4 +630,39 @@ func checkFailedUnits(host string) []string {
 		}
 	}
 	return units
+}
+
+// checkLatticeUnits checks the status of all claude-peers systemd user services.
+func checkLatticeUnits(host string) []LatticeUnit {
+	if host == "" {
+		return nil
+	}
+	units := []string{
+		"claude-peers-broker",
+		"claude-peers-dream",
+		"claude-peers-supervisor",
+		"claude-peers-wazuh-bridge",
+		"claude-peers-security-watch",
+		"claude-peers-response-daemon",
+	}
+	var result []LatticeUnit
+	for _, u := range units {
+		cmd := fmt.Sprintf("systemctl --user is-active %s.service 2>/dev/null || echo inactive", u)
+		var c *exec.Cmd
+		if host == "local" {
+			c = exec.Command("bash", "-c", cmd)
+		} else {
+			c = exec.Command("ssh", "-o", "ConnectTimeout=4", "-o", "BatchMode=yes", host, "bash -c "+shellQuote(cmd))
+		}
+		out, err := c.Output()
+		status := "inactive"
+		if err == nil {
+			status = strings.TrimSpace(string(out))
+		}
+		result = append(result, LatticeUnit{
+			Name:   strings.TrimPrefix(u, "claude-peers-"),
+			Status: status,
+		})
+	}
+	return result
 }
