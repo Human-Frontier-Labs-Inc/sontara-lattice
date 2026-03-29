@@ -10,9 +10,17 @@ function updateSecurityPage(healthMap) {
   const hasData = healthMap && Object.keys(healthMap).length > 0;
 
   // Build machine list from stats + health data
+  // Also build a reverse map: normalized name -> raw healthMap key
   const allIds = new Set();
+  const healthKeyMap = {}; // normalized -> raw key in healthMap
   if (typeof MACHINES !== 'undefined') for (const m of MACHINES) allIds.add(m);
-  if (hasData) for (const k of Object.keys(healthMap)) allIds.add(normalizeMachine(k) || k);
+  if (hasData) {
+    for (const k of Object.keys(healthMap)) {
+      const norm = normalizeMachine(k) || k;
+      allIds.add(norm);
+      healthKeyMap[norm] = k;
+    }
+  }
   const machineIds = Array.from(allIds).sort();
 
   // Collect per-machine state
@@ -23,7 +31,8 @@ function updateSecurityPage(healthMap) {
   const allEvents = [];
 
   for (const id of machineIds) {
-    const h = hasData ? (healthMap[id] || healthMap[normalizeMachine(id)]) : null;
+    const rawKey = healthKeyMap[id] || id;
+    const h = hasData ? (healthMap[rawKey] || healthMap[id]) : null;
     const score = h ? h.score : 0;
     const status = h ? h.status : 'healthy';
     const lastDesc = h ? h.last_event_desc : '';
@@ -39,6 +48,7 @@ function updateSecurityPage(healthMap) {
     // Determine monitoring type
     let monType = 'NO AGENT';
     if (id === 'willyv4') monType = 'SENTINEL';
+    else if (id === 'sonias-mbp') monType = 'NO AGENT';
     else if (hasAgent) monType = 'MONITORED';
     else monType = 'AWAITING';
 
@@ -116,6 +126,8 @@ function updateSecurityPage(healthMap) {
         feedEvents.push({ machine: mid, text: e, time: data.last_event });
       }
     }
+    // Reverse order so newest events show first
+    feedEvents.reverse();
   }
 
   html += '<div class="soc-feed">';
