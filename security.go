@@ -111,7 +111,10 @@ func (b *Broker) decayHealthScores() {
 			continue
 		}
 		if h.Score > 0 {
-			h.Score--
+			h.Score -= 2
+			if h.Score < 0 {
+				h.Score = 0
+			}
 		}
 		// Recalculate status after decay.
 		switch {
@@ -195,7 +198,7 @@ func (b *Broker) getHealthScore(machine string) int {
 
 // startHealthDecay runs the periodic score decay loop.
 func (b *Broker) startHealthDecay(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
