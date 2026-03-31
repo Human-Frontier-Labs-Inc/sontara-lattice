@@ -2,15 +2,7 @@
 
 Self-hosted security monitoring and autonomous agent orchestration for AI fleets.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Sontara Lattice                          │
-│                                                             │
-│  Claude Code sessions  ──►  Trust Broker  ──►  NATS        │
-│  Autonomous daemons    ──►  Wazuh EDR     ──►  Gridwatch   │
-│  Fleet machines        ──►  UCAN tokens   ──►  Incidents   │
-└─────────────────────────────────────────────────────────────┘
-```
+![Architecture](assets/architecture.png)
 
 ## What is this?
 
@@ -23,7 +15,7 @@ Sontara Lattice is a security-first platform for running autonomous AI agents ac
 - **Cryptographic Auth** -- UCAN (User Controlled Authorization Networks) with Ed25519 key pairs; every request requires a capability-scoped token chained to a root of trust
 - **Real-time Events** -- NATS JetStream for fleet-wide event streaming with 24-hour retention and per-subject limits
 
-**This is running in production** on a 7-machine Tailscale mesh (Arch, Ubuntu, Debian, macOS, Raspberry Pi).
+**Built and tested in production** on a multi-machine Tailscale mesh spanning Arch, Ubuntu, Debian, macOS, and Raspberry Pi.
 
 ---
 
@@ -32,7 +24,7 @@ Sontara Lattice is a security-first platform for running autonomous AI agents ac
 ### Docker Compose (recommended)
 
 ```bash
-git clone https://github.com/your-github-org/sontara-lattice.git
+git clone https://github.com/Human-Frontier-Labs-Inc/sontara-lattice.git
 cd sontara-lattice
 bash setup.sh
 ```
@@ -59,7 +51,7 @@ Services after setup:
 ### Build from source
 
 ```bash
-git clone https://github.com/your-github-org/sontara-lattice.git
+git clone https://github.com/Human-Frontier-Labs-Inc/sontara-lattice.git
 cd sontara-lattice
 go build -o claude-peers .
 cp claude-peers ~/.local/bin/
@@ -104,33 +96,15 @@ claude-peers save-token <jwt>
 
 ## Architecture
 
-```
-                        ┌──────────────────────────────────────────┐
-                        │            Trust Broker (HTTP)           │
-                        │  SQLite ── UCAN Validator ── Health Map  │
-                        └─────────────┬────────────────────────────┘
-                                      │ REST API (UCAN auth)
-          ┌───────────────────────────┼───────────────────────┐
-          │                           │                       │
-    ┌─────▼──────┐            ┌───────▼──────┐        ┌──────▼──────┐
-    │ Claude Code│            │   Daemon     │        │  Gridwatch  │
-    │  (MCP srv) │            │  Supervisor  │        │  Dashboard  │
-    └─────┬──────┘            └───────┬──────┘        └──────┬──────┘
-          │                           │                       │
-          └───────────────────────────▼───────────────────────┘
-                              NATS JetStream (fleet.>)
-                    ┌─────────────────┬────────────────────┐
-                    │                 │                    │
-             ┌──────▼─────┐   ┌───────▼──────┐   ┌───────▼──────┐
-             │Wazuh Bridge │   │Security Watch│   │  Response    │
-             │ (tail logs) │   │ (correlator) │   │  Daemon      │
-             └──────┬──────┘   └───────┬──────┘   └──────────────┘
-                    │                  │
-             ┌──────▼──────────────────▼──────┐
-             │         Wazuh Manager          │
-             │  (FIM, auth logs, proc monitor)│
-             └────────────────────────────────┘
-```
+![Architecture](docs/architecture.png)
+
+### Daemon Lifecycle
+
+![Daemon Flow](assets/daemon-flow.png)
+
+### Deployment
+
+![Deployment](docs/deployment.png)
 
 **Data flow for security events:**
 1. Wazuh agent on fleet machine detects file change, auth failure, or process anomaly
