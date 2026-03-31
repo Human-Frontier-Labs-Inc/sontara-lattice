@@ -1,0 +1,1 @@
+{"schedule":"interval:5m","description":"Check that broker, NATS, and Wazuh are reachable and report status"}

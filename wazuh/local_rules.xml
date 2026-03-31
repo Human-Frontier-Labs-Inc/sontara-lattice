@@ -1,0 +1,181 @@
+<group name="claude-peers,">
+  <rule id="100099" level="7">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">claude-peers</match>
+    <match type="pcre2">/\.local/bin/</match>
+    <description>claude-peers binary deployed (expected update): $(file)</description>
+    <group>fim,binary_deploy,</group>
+  </rule>
+
+  <rule id="100100" level="12">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/\.config/claude-peers/(identity\.pem|token\.jwt|root\.pub)</match>
+    <description>UCAN credential file modified: $(file)</description>
+    <group>fim,credential_change,</group>
+  </rule>
+
+  <rule id="100101" level="13">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">claude-peers</match>
+    <match type="pcre2">/usr/local/bin/|/usr/bin/</match>
+    <description>claude-peers binary TAMPERED in system path: $(file)</description>
+    <group>fim,binary_tamper,</group>
+  </rule>
+
+  <rule id="100102" level="10">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/\.ssh/(id_|authorized_keys|config)</match>
+    <description>SSH key or auth config modified: $(file)</description>
+    <group>fim,ssh_key_change,</group>
+  </rule>
+
+  <rule id="100110" level="10">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">\.(bashrc|zshrc|profile|bash_profile)</match>
+    <description>Shell startup file modified (possible persistence): $(file)</description>
+    <group>fim,shell_persistence,</group>
+  </rule>
+
+  <rule id="100111" level="9">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/spool/cron|/crontab</match>
+    <description>Crontab modified: $(file)</description>
+    <group>fim,cron_persistence,</group>
+  </rule>
+
+  <rule id="100112" level="10">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/etc/environment|/etc/profile\.d/</match>
+    <description>System environment modified (possible persistence): $(file)</description>
+    <group>fim,env_persistence,</group>
+  </rule>
+
+  <rule id="100113" level="11">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/\.config/claude-peers/config\.json</match>
+    <description>claude-peers config.json modified (possible MITM): $(file)</description>
+    <group>fim,config_tamper,</group>
+  </rule>
+
+  <rule id="100114" level="9">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/etc/cron\.</match>
+    <description>System cron config modified: $(file)</description>
+    <group>fim,cron_persistence,</group>
+  </rule>
+
+  <rule id="100115" level="12">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/etc/(hosts|resolv\.conf|nsswitch\.conf)</match>
+    <description>DNS config modified (possible hijacking): $(file)</description>
+    <group>fim,dns_hijack,</group>
+  </rule>
+
+  <rule id="100116" level="11">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">go\.sum</match>
+    <description>Go module checksums modified (possible supply chain): $(file)</description>
+    <group>fim,supply_chain,</group>
+  </rule>
+
+  <rule id="100117" level="11">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">claude-peers-daemons/</match>
+    <description>Daemon config modified (possible hijack): $(file)</description>
+    <group>fim,daemon_hijack,</group>
+  </rule>
+
+  <rule id="100130" level="9">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/systemd/</match>
+    <description>Systemd unit file changed: $(file)</description>
+    <group>fim,persistence,</group>
+  </rule>
+
+  <rule id="100200" level="15" frequency="2" timeframe="300">
+    <if_matched_group>credential_change</if_matched_group>
+    <same_source_ip />
+    <description>QUARANTINE: credential + binary change on same host</description>
+    <group>quarantine,</group>
+  </rule>
+
+  <rule id="100201" level="13" frequency="2" timeframe="300">
+    <if_matched_group>shell_persistence</if_matched_group>
+    <if_matched_group>ssh_key_change</if_matched_group>
+    <same_source_ip />
+    <description>QUARANTINE: shell persistence + SSH key change on same host</description>
+    <group>quarantine,</group>
+  </rule>
+
+  <!-- Syncthing config modified (exfil detection) -->
+  <rule id="100118" level="10">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/syncthing/</match>
+    <description>Syncthing config modified (possible exfil setup): $(file)</description>
+    <group>fim,syncthing_tamper,</group>
+  </rule>
+
+  <!-- LD_PRELOAD config modified (binary hooking evasion) -->
+  <rule id="100119" level="13">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">ld\.so\.preload</match>
+    <description>LD_PRELOAD config modified (binary hooking attack): $(file)</description>
+    <group>fim,ld_preload,</group>
+  </rule>
+
+  <!-- PAM authentication bypass -->
+  <rule id="100202" level="10">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/etc/pam\.d/</match>
+    <description>PAM config modified (possible auth bypass): $(file)</description>
+    <group>fim,pam_tamper,</group>
+  </rule>
+
+  <!-- Kernel module persistence -->
+  <rule id="100203" level="12">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/etc/modules-load\.d/</match>
+    <description>Kernel module load config modified (possible rootkit persistence): $(file)</description>
+    <group>fim,kernel_module,</group>
+  </rule>
+
+  <!-- Device-triggered persistence via udev -->
+  <rule id="100204" level="9">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/etc/udev/rules\.d/</match>
+    <description>udev rules modified (possible device-triggered persistence): $(file)</description>
+    <group>fim,udev_persistence,</group>
+  </rule>
+
+  <!-- Sudoers privilege escalation -->
+  <rule id="100205" level="13">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/etc/sudoers</match>
+    <description>sudoers modified (possible privilege escalation): $(file)</description>
+    <group>fim,privesc,</group>
+  </rule>
+
+  <!-- /etc/environment modification -->
+  <rule id="100206" level="10">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">/etc/environment</match>
+    <description>System environment file modified (possible persistence or hijacking): $(file)</description>
+    <group>fim,env_persistence,</group>
+  </rule>
+
+  <!-- XDG autostart persistence (Hyprland / desktop) -->
+  <rule id="100207" level="8">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">\.config/autostart/</match>
+    <description>XDG autostart entry modified (possible desktop persistence): $(file)</description>
+    <group>fim,xdg_persistence,</group>
+  </rule>
+
+  <!-- User systemd unit persistence -->
+  <rule id="100208" level="9">
+    <if_group>syscheck</if_group>
+    <match type="pcre2">\.config/systemd/user/</match>
+    <description>User systemd unit modified (possible user-level persistence): $(file)</description>
+    <group>fim,systemd_persistence,</group>
+  </rule>
+</group>

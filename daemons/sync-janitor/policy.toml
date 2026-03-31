@@ -1,0 +1,3 @@
+[tools]
+allow = ["bash", "read", "web_fetch"]
+deny = ["rm -rf", "shutdown", "reboot"]

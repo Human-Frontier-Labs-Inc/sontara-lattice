@@ -1,0 +1,1 @@
+{"schedule":"interval:15m","description":"Keep PRs mergeable across configured GitHub orgs (set PR_HELPER_ORGS env var)"}

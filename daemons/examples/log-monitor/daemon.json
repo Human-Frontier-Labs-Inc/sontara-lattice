@@ -1,0 +1,1 @@
+{"schedule":"interval:10m","description":"Scan recent logs for ERROR and WARN lines and surface a summary"}
