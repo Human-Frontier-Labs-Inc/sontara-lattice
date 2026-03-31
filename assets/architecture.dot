@@ -16,10 +16,10 @@ digraph architecture {
   // Sessions
   subgraph cluster_sessions {
     label="Claude Code Sessions" fontsize=10 style="dashed" color="#AAAAAA" bgcolor="#F5F5F5"
-    s1 [label="Session\nMachine A / pts/3" fillcolor="#E8F5E9"]
-    s2 [label="Session\nMachine A / pts/7" fillcolor="#E8F5E9"]
-    s3 [label="Session\nMachine B" fillcolor="#E8F5E9"]
-    s4 [label="Session\nMachine C" fillcolor="#E8F5E9"]
+    s1 [label="Session\nWorkstation / pts/3" fillcolor="#E8F5E9"]
+    s2 [label="Session\nWorkstation / pts/7" fillcolor="#E8F5E9"]
+    s3 [label="Session\nLaptop" fillcolor="#E8F5E9"]
+    s4 [label="Session\nMacBook" fillcolor="#E8F5E9"]
   }
 
   // MCP

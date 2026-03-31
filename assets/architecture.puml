@@ -14,12 +14,12 @@ skinparam CloudBorderColor #aaa
 title claude-peers: Fleet Architecture
 
 together {
-  node "omarchy" as om
-  node "macbook1" as mb
-  node "thinkbook" as tb
+  node "workstation" as om
+  node "macbook" as mb
+  node "laptop" as tb
 }
 
-node "ubuntu-homelab" as homelab {
+node "broker-host" as homelab {
   [Broker] as broker
   queue "NATS" as nats
   [Supervisor] as super
@@ -27,11 +27,11 @@ node "ubuntu-homelab" as homelab {
 
 cloud "LiteLLM" as llm
 
-node "raspdeck" as rp {
+node "edge-device" as rp {
   [Gridwatch] as gw
 }
 
-node "willyv4" as v4 {
+node "iot-device" as v4 {
   [Ghostbox] as ghost
 }
 

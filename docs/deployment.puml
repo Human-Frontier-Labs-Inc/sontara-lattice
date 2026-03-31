@@ -14,7 +14,7 @@ title <b>FLEET DEPLOYMENT</b>\nPhysical machines on Tailscale mesh
 
 cloud "Tailscale VPN\n<color:#666>Encrypted mesh</color>" as tailscale #f4f8ff {
 
-  node "ubuntu-homelab\n<color:#666>100.109.211.128</color>\n<color:#666>Ubuntu 24.04 | 32GB</color>" as homelab #f4fff0 {
+  node "broker-host\n<color:#666>10.0.1.1</color>\n<color:#666>Ubuntu 24.04 | 32GB</color>" as homelab #f4fff0 {
     component "[Trust Broker]\n:7899" as broker #e4f0e8
     component "[NATS Server]\n:4222" as nats #e0f0ff
     component "[Supervisor]" as supervisor #e4f0e8
@@ -25,28 +25,28 @@ cloud "Tailscale VPN\n<color:#666>Encrypted mesh</color>" as tailscale #f4f8ff {
     database "SQLite" as db #e4f0e8
   }
 
-  node "omarchy\n<color:#666>100.85.150.110</color>\n<color:#666>Arch | N100 | 16GB</color>" as omarchy #f0f4ff {
+  node "workstation\n<color:#666>10.0.1.2</color>\n<color:#666>Arch | x86 | 16GB</color>" as ws1 #f0f4ff {
     component "[Claude Code]\nMCP + Peers" as cc1 #e8ecf4
     component "[Wazuh Agent]" as wa1 #f4e0e0
   }
 
-  node "thinkbook\n<color:#666>100.119.90.27</color>\n<color:#666>Arch | i5 | 8GB</color>" as thinkbook #f0f4ff {
+  node "laptop\n<color:#666>10.0.1.3</color>\n<color:#666>Arch | x86 | 8GB</color>" as lp1 #f0f4ff {
     component "[Claude Code]\nMCP + Peers" as cc2 #e8ecf4
     component "[Wazuh Agent]" as wa2 #f4e0e0
   }
 
-  node "raspdeck\n<color:#666>Pi 5 | 16GB</color>" as raspdeck #f0f8ff {
+  node "edge-device\n<color:#666>Pi 5 | 16GB</color>" as edge1 #f0f8ff {
     component "[Gridwatch]\n:8888\n<color:#666>5-page kiosk</color>" as gridwatch #e0ecf4
     component "[Claude Code]" as cc3 #e8ecf4
     component "[Wazuh Agent]" as wa3 #f4e0e0
   }
 
-  node "willyv4\n<color:#666>100.95.2.57</color>\n<color:#666>Pi Zero 2W | 512MB</color>" as willyv4 #fff8f0 {
+  node "iot-device\n<color:#666>10.0.1.5</color>\n<color:#666>Pi Zero 2W | 512MB</color>" as iot1 #fff8f0 {
     component "[ghostbox]\nVoice agent" as ghost #f4ece0
     component "[Awareness\nEngine]" as aware #f4ece0
   }
 
-  node "macbook1\n<color:#666>100.67.104.73</color>\n<color:#666>MacBook Pro</color>" as macbook #f0f4ff {
+  node "macbook\n<color:#666>10.0.1.4</color>\n<color:#666>MacBook Pro</color>" as macbook #f0f4ff {
     component "[Claude Code]" as cc4 #e8ecf4
     component "[Wazuh Agent]" as wa4 #f4e0e0
   }
@@ -86,12 +86,12 @@ note right of homelab
   - LiteLLM Proxy (Docker)
 end note
 
-note bottom of willyv4
-  <b>Cyberdeck:</b>
+note bottom of iot1
+  <b>IoT Node:</b>
   Battery-powered
-  Whisplay HAT
+  Voice HAT
   4G capable
-  No Wazuh (ARMv7)
+  No Wazuh (ARMv6)
 end note
 
 @enduml

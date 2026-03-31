@@ -16,15 +16,15 @@ title <b>SONTARA LATTICE</b>\nClaude-native fleet trust platform
 
 ' === AGENT LAYER ===
 rectangle "AGENT LAYER" as agents #f0f4ff {
-  node "omarchy\n<color:#c75000>Claude Code</color>" as omarchy #f8f9fc {
+  node "workstation\n<color:#c75000>Claude Code</color>" as ws1 #f8f9fc {
     component "MCP Server" as mcp1 #e8ecf4
     component "UCAN: peer-session" as ucan1 #e8ecf4
   }
-  node "thinkbook\n<color:#c75000>Claude Code</color>" as thinkbook #f8f9fc {
+  node "laptop\n<color:#c75000>Claude Code</color>" as lp1 #f8f9fc {
     component "MCP Server" as mcp2 #e8ecf4
     component "UCAN: peer-session" as ucan2 #e8ecf4
   }
-  node "willyv4\n<color:#c75000>ghostbox</color>" as willyv4 #f8f9fc {
+  node "iot-device\n<color:#c75000>ghostbox</color>" as iot1 #f8f9fc {
     component "StatusFunc" as status1 #e8ecf4
     component "UCAN: peer-session" as ucan3 #e8ecf4
   }
@@ -42,7 +42,7 @@ rectangle "DAEMON LAYER" as daemons #f0fff4 {
 
 ' === PLATFORM LAYER ===
 rectangle "PLATFORM LAYER" as platform #f4fff0 {
-  node "ubuntu-homelab" as homelab #f8fcf8 {
+  node "broker-host" as homelab #f8fcf8 {
     component "Trust Broker\n<color:#2d8a4e>UCAN validation</color>\n<color:#2d8a4e>Peer registry</color>\n<color:#2d8a4e>Health scoring</color>" as broker #e4f0e8
     component "Daemon Supervisor\n<color:#666>Lifecycle management</color>\n<color:#666>Triage + scheduling</color>" as supervisor #e4f0e8
     component "Fleet Memory\n<color:#666>dream-watch</color>" as dream #e4f0e8
@@ -62,15 +62,15 @@ rectangle "SECURITY LAYER" as security #fff0f0 {
 
 ' === OBSERVABILITY LAYER ===
 rectangle "OBSERVABILITY" as observability #f0f8ff {
-  node "raspdeck" as raspdeck #f4f8fc {
+  node "edge-device" as edge1 #f4f8fc {
     component "Gridwatch\n<color:#666>5-page kiosk</color>\n<color:#666>Fleet | Services | NATS</color>\n<color:#666>Daemons | Peers</color>" as gridwatch #e0ecf4
   }
 }
 
 ' === CONNECTIONS ===
-omarchy -[#2d8a4e]-> broker : <color:#2d8a4e>UCAN Bearer</color>
-thinkbook -[#2d8a4e]-> broker : <color:#2d8a4e>UCAN Bearer</color>
-willyv4 -[#2d8a4e]-> broker : <color:#2d8a4e>UCAN Bearer</color>
+ws1 -[#2d8a4e]-> broker : <color:#2d8a4e>UCAN Bearer</color>
+lp1 -[#2d8a4e]-> broker : <color:#2d8a4e>UCAN Bearer</color>
+iot1 -[#2d8a4e]-> broker : <color:#2d8a4e>UCAN Bearer</color>
 
 supervisor -[#0077aa]-> scout
 supervisor -[#0077aa]-> prhelper
