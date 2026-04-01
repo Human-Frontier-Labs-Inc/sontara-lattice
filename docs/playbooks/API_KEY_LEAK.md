@@ -25,7 +25,7 @@ Every secret in the Sontara Lattice fleet, where it lives, and what it protects.
 
 | Secret | Value Pattern | Where Configured | Where Used | Rotation Difficulty |
 |--------|--------------|------------------|------------|-------------------|
-| **LiteLLM Proxy Key** | `sk-litellm-ai-town-proxy-2026` | broker-server LiteLLM config | Daemons via `CLAUDE_PEERS_LLM_API_KEY` env var in config.json | Low -- single service |
+| **LiteLLM Proxy Key** | `sk-litellm-your-key-here` | broker-server LiteLLM config | Daemons via `CLAUDE_PEERS_LLM_API_KEY` env var in config.json | Low -- single service |
 | **Anthropic API Key** | `sk-ant-*` | Environment on broker-server | LiteLLM proxy backend | Low -- single service |
 | **NATS Token** | `<your-nats-token>` | `CLAUDE_PEERS_NATS_TOKEN` env var / config.json on every machine | Every NATS connection (broker, bridge, security-watch, dream, gridwatch) | **High** -- every machine and service |
 | **Wazuh API Password** | `Fl33tW4tch.2026Xr` | `~/docker/wazuh/.env` on broker-server, Docker env `API_PASSWORD` | Wazuh REST API on port 55000 | Medium -- single container |
@@ -39,7 +39,7 @@ Every secret in the Sontara Lattice fleet, where it lives, and what it protects.
 
 ## Per-Key Impact Assessment
 
-### LiteLLM Proxy Key (`sk-litellm-ai-town-proxy-2026`)
+### LiteLLM Proxy Key (`sk-litellm-your-key-here`)
 
 **What an attacker can do:**
 - Send requests to the LiteLLM proxy as if they were a daemon

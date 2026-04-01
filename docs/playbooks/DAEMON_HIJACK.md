@@ -40,7 +40,7 @@ The supervisor invokes the `agent` binary with these files. The agent binary exe
 | fleet-scout | interval:15m | claude-sonnet | SSH to all machines, check health, curl APIs | **Full fleet reconnaissance, data exfil from every machine** |
 | librarian | interval:30m | claude-sonnet | Read/write files, git operations, create PRs | **Push malicious code via PR, modify any doc** |
 | pr-helper | interval:30m | claude-sonnet | Clone repos, push to branches, fix PRs | **Inject malicious code into any open PR across all orgs** |
-| llm-watchdog | interval:10m | claude-haiku | Curl LLM endpoints, check health | **Leak LiteLLM API key (sk-litellm-ai-town-proxy-2026), DoS LLM** |
+| llm-watchdog | interval:10m | claude-haiku | Curl LLM endpoints, check health | **Leak LiteLLM API key (sk-litellm-your-key-here), DoS LLM** |
 | sync-janitor | interval:15m | claude-sonnet | Syncthing maintenance | **Modify sync configs, redirect file syncs** |
 | fleet-digest | event:fleet.> | claude-sonnet | Summarize NATS events | **Read all fleet events, potential info leak** |
 
