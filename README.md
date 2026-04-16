@@ -1,5 +1,16 @@
 # Sontara Lattice
 
+> **Status: archived.** This repo is the original monolith that spawned several standalone projects now maintained separately. It remains public as a reference for the architecture and design decisions that led to the current system.
+>
+> **What came out of this repo:**
+> - [claude-peers-go](https://github.com/WillyV3/claude-peers-go) — the peer discovery + messaging fabric, rewritten in Go as a clean standalone broker + MCP server
+> - [claude-cap-tracker](https://github.com/WillyV3/claude-cap-tracker) — budget visibility tooling extracted from the monitoring layer
+> - [fleet-security-sweep](https://github.com/WillyV3/fleet-security-sweep) — the hourly fleet health sweep, extracted and parameterized
+> - [claude-session-metrics](https://github.com/WillyV3/claude-session-metrics) — rework-rate KPI measurement, extracted from the harness eval work
+> - The daemon system (nightly meta-agent, opportunity scanner, task engine) evolved into a private HFL repository with a multi-agent convergence pipeline, proposal staging, and Opus 4.7 integration.
+>
+> **If you're here from one of those repos:** this is where the ideas started. UCAN auth, Wazuh EDR integration, the fleet digest pattern, the daemon orchestration loop — all prototyped here first, then rebuilt clean in their own repos.
+
 Self-hosted security monitoring and autonomous agent orchestration for AI fleets.
 
 ![Architecture](assets/architecture.png)
